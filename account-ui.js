@@ -848,7 +848,7 @@
       openDialog((stripe ? 'Subscribe to ' : 'Request ')+item.name,
         `${hostingName(state.hosting)} · ${money(item[`${state.interval}_price_cents`],item.currency)} / ${intervalLabel[state.interval]}`,details,async()=>{
           if (stripe) await openStripe('stripe.checkout',selection);
-          else { await api('subscription.request',selection);location.assign('account.html?section=subscription'); }
+          else { await api('subscription.request',selection);location.assign(selection.hosting_mode==='cloud'?'account.html?section=setup':'account.html?section=subscription'); }
         },stripe?'Continue to Stripe':'Submit request');
     } else if(action==='edit-package')editPackage(id);
     else if(action==='archive-package')openDialog('Archive this package?','It will be removed from new requests. Existing subscriptions keep their recorded package terms.','',async()=>{await api('admin.package_archive',{package_id:id});await reloadAdmin();toast('Package archived.');},'Archive package',true);

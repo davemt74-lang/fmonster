@@ -60,7 +60,8 @@ $buyer = str_repeat('b',32);
 $sender = str_repeat('c',32);
 $recipient = str_repeat('d',32);
 $observer = str_repeat('e',32);
-foreach ([$admin=>'admin',$buyer=>'buyer',$sender=>'sender',$recipient=>'recipient',$observer=>'observer'] as $id=>$name) {
+$operatorBuyer = str_repeat('f',32);
+foreach ([$admin=>'admin',$buyer=>'buyer',$sender=>'sender',$recipient=>'recipient',$observer=>'observer',$operatorBuyer=>'operator-buyer'] as $id=>$name) {
     $db->execute('INSERT INTO users (id,name,email,password_hash,role,created_at,updated_at) VALUES (?,?,?,?,?,?,?)',
         [$id,$name,$name.'@example.test','fixture',$id===$admin?'admin':'customer',$now,$now]);
 }
@@ -225,6 +226,14 @@ $db->execute('UPDATE fm_installations SET created_at=? WHERE id=?',[1709208000,$
 $expirySql = FMSubdomains::expirySql($db,0);
 $check((int)$db->one("SELECT $expirySql AS expiry FROM fm_installations i LEFT JOIN fm_subdomain_terms t ON t.installation_id=i.id WHERE i.id=?",[$site])['expiry'] === 1740744000,
     'Queue anniversary preserves leap-day policy');
+$use($operatorBuyer);
+$call('stripe.checkout',$settings);
+$unpaid = array_values(array_filter($rows($operatorBuyer),static fn(array $row): bool => $row['billing_state'] === 'checkout'))[0];
+$expect('admin_required',fn()=>$operator('stripe_recover',['subscription_id'=>$unpaid['id']]));
+$use($admin);
+$operator('stripe_recover',['subscription_id'=>$unpaid['id']]);
+$check($order($unpaid['id'])['status'] === 'checkout_expired'
+    && $state['checkout'][$unpaid['checkout_id']]['status'] === 'expired','Operator recovery verifies and expires the correct customer checkout');
 $use($sender);
 $check($call('account.summary')['onboarding']['step'] === 'reserve','An active Cloud plan unlocks domain registration');
 $onboardingSite = $call('installations.register',['business_name'=>'Setup restaurant','hosting_mode'=>'cloud','subdomain'=>'setup-restaurant'])['installation']['id'];
@@ -241,6 +250,11 @@ $queued = $call('account.summary');
 $check($queued['onboarding']['step'] === 'queued' && !str_contains(json_encode($queued),'Fixture-Gelato-01!'),'Queued setup resumes without exposing owner credentials');
 $db->execute("UPDATE fm_hosted_setups SET state='failed' WHERE installation_id=?",[$onboardingSite]);
 $check($call('account.summary')['onboarding']['step'] === 'failed','Provisioning failure is visible to its customer');
+$use($admin);
+$check($operator('operations',['view'=>'hosting'])['rows'][0]['can_retry'],'Failed setup can be retried from the operations queue');
+FMHostedOperations::dispatch('admin.hosted_command',['installation_id'=>$onboardingSite,'command'=>'retry'],$db);
+$check(!$operator('operations',['view'=>'hosting'])['rows'][0]['can_retry'],'Queued retry is recorded and no second action is offered');
+$use($sender);
 $db->execute("UPDATE fm_hosted_setups SET state='ready' WHERE installation_id=?",[$onboardingSite]);
 $db->execute("UPDATE fm_installations SET status='active' WHERE id=?",[$onboardingSite]);
 $check($call('account.summary')['onboarding']['step'] === 'ready','Ready link is unlocked after provisioning');
@@ -265,8 +279,16 @@ try {
     $db->execute("UPDATE fm_lifecycle_notices SET state='pending',due_at=? WHERE kind='transfer'",[$now]);
     $db->execute("UPDATE fm_subdomain_transfers SET state='declined' WHERE id=?",[$transfer['transfer_id']]);
     $check(FMLifecycleNotices::run($db,$notices)['skipped'] === 1,'A stale queued transfer is revalidated before delivery');
+    $db->execute("UPDATE fm_lifecycle_notices SET state='pending',due_at=? WHERE kind='billing'",[$now]);
+    $failedNotice = $notices;
+    $failedNotice['mail']['capture_path'] = $capture . '/missing-parent';
+    file_put_contents($failedNotice['mail']['capture_path'], 'not a directory');
+    $check(@FMLifecycleNotices::run($db,$failedNotice)['retry'] === 1,'Known transport failure schedules a retry');
+    $db->execute("UPDATE fm_lifecycle_notices SET due_at=? WHERE kind='billing'",[$now]);
+    $check(FMLifecycleNotices::run($db,$notices)['sent'] === 1,'A due retry can deliver successfully');
+    unlink($failedNotice['mail']['capture_path']);
 } finally {
-    foreach (glob($capture . '/*.json') as $file) unlink($file);
+    foreach (glob($capture . '/*') as $file) unlink($file);
     if (is_dir($capture)) rmdir($capture);
 }
 $releaseRoot = sys_get_temp_dir() . '/fm-signed-' . bin2hex(random_bytes(8));
@@ -305,6 +327,8 @@ try {
     $zipFile($artifact,array_replace($members,['release.json'=>json_encode(array_replace($manifest,['source_commit'=>str_repeat('b',40)]))]));
     $expect('hosted_bundle_identity',fn()=>$import());
     $check(glob($releaseRoot . '/gelato-*.zip') === [],'Rejected bundles leave no staged ZIP');
+    $zipFile($artifact,array_replace($members,['gelato-hosted.zip'=>$members['gelato-hosted.zip'] . 'tampered']));
+    $expect('hosted_bundle_checksum',fn()=>$import());
     $zipFile($artifact,$members);
     $expect('invalid_update_policy',fn()=>$import(['migration_required'=>'on','automatic_compatible'=>'on']));
     $release = $import()['release_id'];

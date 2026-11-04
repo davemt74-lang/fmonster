@@ -65,10 +65,10 @@ try {
         <?php if ($csrf === ''): ?>
             <p><a href="login.html?next=admin">Sign in as an administrator</a>, then reopen this page.</p>
         <?php elseif ($ready): ?>
-            <p>Licensing and the release registry are ready. Hosted setup, billing, and annual subdomain registration are available.</p>
-            <a class="button primary" href="admin.html?section=licenses">Open licensing</a>
+            <p>The Food Monster database is ready. Open Operations to review setup, billing, and domain registrations.</p>
+            <a class="button primary" href="admin.html?section=operations">Open Operations</a>
         <?php else: ?>
-            <p>This upgrade adds billing and subdomain registration tables alongside any missing licensing, release, analytics, and hosting tables.</p>
+            <p>This upgrade adds the operator dashboard, lifecycle notices, and signed release intake tables alongside any earlier missing tables.</p>
             <form method="post">
                 <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf, ENT_QUOTES, 'UTF-8') ?>">
                 <button class="button primary" type="submit">Run database upgrade</button>
