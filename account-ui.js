@@ -162,7 +162,7 @@
     app.innerHTML = `${header()}<main id="portal-main" class="service-unavailable"><div class="eyebrow">ACCOUNT SERVICES</div><h1>Your account starts here.</h1><p>${escape(state.bootError || unavailableText)}</p><div class="card-actions"><a class="button primary" href="signup.html">View sign-up page ${icon('arrow')}</a><a class="button secondary" href="plans.html">View packages</a></div><div class="preview-note">The customer dashboard and admin area load real account data after server setup.</div></main>`;
   }
   function shell(content, admin = false) {
-    const tabs = admin ? [['operations','grid','Operations'],['packages','grid','Packages'],['subscriptions','card','Subscriptions'],['installations','server','Installations'],['subdomains','cloud','Subdomains'],['licenses','lock','Licenses'],['releases','grid','Releases'],['updates','arrow','Updates'],['analytics','grid','Update analytics'],['cpanel','server','cPanel'],['hosting','cloud','Hosting jobs'],['customers','users','Customers']] : [['overview','grid','Overview'],['restaurant','shop','My restaurant'],['subscription','card','Subscription'],['security','lock','Security']];
+    const tabs = admin ? [['operations','grid','Operations'],['packages','grid','Packages'],['subscriptions','card','Subscriptions'],['installations','server','Installations'],['subdomains','cloud','Subdomains'],['licenses','lock','Licenses'],['releases','grid','Releases'],['updates','arrow','Updates'],['analytics','grid','Update analytics'],['cpanel','server','cPanel'],['hosting','cloud','Hosting jobs'],['customers','users','Customers']] : [['overview','grid','Overview'],['setup','cloud','Cloud setup'],['restaurant','shop','My restaurant'],['subscription','card','Subscription'],['security','lock','Security']];
     app.innerHTML = `${header({label:admin ? 'ADMIN' : 'MY ACCOUNT'})}<div class="portal-shell"><aside class="portal-sidebar" aria-label="${admin ? 'Admin' : 'Account'} sections"><div class="sidebar-eyebrow">${admin ? 'PLATFORM' : 'YOUR WORKSPACE'}</div><nav class="portal-tabs">${tabs.map(([key,ico,label])=>`<button type="button" class="portal-tab${state.tab === key ? ' active' : ''}" data-tab="${key}" ${state.tab === key ? 'aria-current="page"' : ''}>${icon(ico)}<span>${label}</span></button>`).join('')}</nav><div class="sidebar-bottom"><span class="sidebar-eyebrow">FOOD MONSTER</span><p>${admin ? 'Subscriptions. Hosting. One home.' : 'Your business. Your hosting choice.'}</p><a href="index.html" class="quiet-link">Back to website ↗</a></div></aside><main class="portal-main" id="portal-main">${admin ? verifyBanner() : ''}${content}</main></div>`;
   }
   const title = (eyebrow, heading, description, action = '') => `<div class="portal-title"><div><div class="eyebrow">${escape(eyebrow)}</div><h1>${escape(heading)}</h1><p>${escape(description)}</p></div>${action}</div>`;
@@ -177,7 +177,7 @@
     const installations = data.installations.filter(item => item.status !== 'released');
     const firstName = (state.user.name || '').trim().split(/\s+/)[0];
     const done = [verificationSatisfied(),active.length > 0,installations.length > 0];
-    return title('YOUR FOOD MONSTER ACCOUNT',`Welcome, ${firstName}.`,'A home for your restaurant’s next chapter.') + verifyBanner() + `<div class="portal-summary"><div class="summary-tile"><span>ACCOUNT</span><strong>${state.user.email_verified ? 'Verified' : state.boot.verification_required === false ? 'Email optional' : 'Check your email'}</strong><small>${escape(state.user.email)}</small></div><div class="summary-tile"><span>SUBSCRIPTIONS</span><strong>${active.length} active</strong><small>${data.subscriptions.some(s=>s.status==='pending_review') ? 'Request awaiting review' : 'Manage your package below'}</small></div><div class="summary-tile"><span>RESTAURANTS</span><strong>${installations.length} registered</strong><small>Cloud or self-hosted</small></div></div><div class="panel-grid"><section class="panel"><div class="panel-header"><div><h2>Your setup, step by step.</h2><p>Three small steps to your restaurant workspace.</p></div><span class="badge">${done.filter(Boolean).length}/3</span></div>${[[state.boot.verification_required === false ? 'Account created' : 'Verify your email',state.boot.verification_required === false ? 'You can continue with your account.' : 'Confirm the address you use for Food Monster.',verificationSatisfied() ? '' : '<button class="text-button" type="button" data-action="resend">Send verification email</button>'],['Choose a subscription','Pick a package for your business and hosting choice.','<a class="inline-link" href="plans.html">Explore packages →</a>'],['Register your restaurant','Reserve a cloud subdomain or connect your own domain.','<button class="text-button" type="button" data-tab="restaurant">Set up my restaurant →</button>']].map(([heading,desc,action],index)=>`<div class="setup-step"><span class="setup-marker${done[index] ? ' done' : ''}">${done[index] ? icon('check') : index+1}</span><div><h3>${heading}</h3><p>${desc}</p>${action}</div></div>`).join('')}</section><section class="panel"><div class="panel-header"><div><h2>Your subscription</h2><p>Software, with a hosting choice that fits.</p></div></div>${active.length ? active.slice(0,2).map(item=>subscriptionCard(item)).join('') : empty('Make room for your next chapter.','Your active package will appear here once your request is approved.','<a class="button secondary" href="plans.html">Explore packages '+icon('arrow')+'</a>',true)}</section></div><section class="panel"><div class="panel-header"><div><h2>Your restaurants</h2><p>Every location has its own Gelato installation.</p></div><button class="text-button" type="button" data-tab="restaurant">Manage →</button></div>${installations.length ? installations.map(item=>`<div class="record-row"><div><strong>${escape(item.business_name)}</strong><p>${escape(item.domain)} · ${hostingName(item.hosting_mode)}</p></div>${badge(item.status)}</div>`).join('') : empty('Your restaurant belongs here.','Choose your package, then register your first installation.','',true)}</section>`;
+    return title('YOUR FOOD MONSTER ACCOUNT',`Welcome, ${firstName}.`,'A home for your restaurant’s next chapter.') + verifyBanner() + `<div class="portal-summary"><div class="summary-tile"><span>ACCOUNT</span><strong>${state.user.email_verified ? 'Verified' : state.boot.verification_required === false ? 'Email optional' : 'Check your email'}</strong><small>${escape(state.user.email)}</small></div><div class="summary-tile"><span>SUBSCRIPTIONS</span><strong>${active.length} active</strong><small>${data.subscriptions.some(s=>s.status==='pending_review') ? 'Request awaiting review' : 'Manage your package below'}</small></div><div class="summary-tile"><span>RESTAURANTS</span><strong>${installations.length} registered</strong><small>Cloud or self-hosted</small></div></div><div class="panel-grid"><section class="panel"><div class="panel-header"><div><h2>Your setup, step by step.</h2><p>Three small steps to your restaurant workspace.</p></div><span class="badge">${done.filter(Boolean).length}/3</span></div>${[[state.boot.verification_required === false ? 'Account created' : 'Verify your email',state.boot.verification_required === false ? 'You can continue with your account.' : 'Confirm the address you use for Food Monster.',verificationSatisfied() ? '' : '<button class="text-button" type="button" data-action="resend">Send verification email</button>'],['Choose a subscription','Pick a package for your business and hosting choice.','<a class="inline-link" href="plans.html">Explore packages →</a>'],['Register your restaurant','Reserve a cloud subdomain or connect your own domain.','<button class="text-button" type="button" data-tab="setup">Set up my restaurant →</button>']].map(([heading,desc,action],index)=>`<div class="setup-step"><span class="setup-marker${done[index] ? ' done' : ''}">${done[index] ? icon('check') : index+1}</span><div><h3>${heading}</h3><p>${desc}</p>${action}</div></div>`).join('')}</section><section class="panel"><div class="panel-header"><div><h2>Your subscription</h2><p>Software, with a hosting choice that fits.</p></div></div>${active.length ? active.slice(0,2).map(item=>subscriptionCard(item)).join('') : empty('Make room for your next chapter.','Your active package will appear here once your request is approved.','<a class="button secondary" href="plans.html">Explore packages '+icon('arrow')+'</a>',true)}</section></div><section class="panel"><div class="panel-header"><div><h2>Your restaurants</h2><p>Every location has its own Gelato installation.</p></div><button class="text-button" type="button" data-tab="restaurant">Manage →</button></div>${installations.length ? installations.map(item=>`<div class="record-row"><div><strong>${escape(item.business_name)}</strong><p>${escape(item.domain)} · ${hostingName(item.hosting_mode)}</p></div>${badge(item.status)}</div>`).join('') : empty('Your restaurant belongs here.','Choose your package, then register your first installation.','',true)}</section>`;
   }
   const intervalLabel = {monthly:'month',quarterly:'3 months',annual:'year'};
   const billingLabels = {checkout:'Awaiting checkout',confirming:'Awaiting payment',active:'Recurring billing active',
@@ -415,14 +415,60 @@
   function renderSecurity() {
     return title('ACCOUNT SECURITY','Keep your account yours.','Manage your password and signed-in sessions.') + `<div class="panel-grid"><section class="panel"><div class="panel-header"><div><h2>Change password</h2><p>Use a unique passphrase you haven’t used elsewhere.</p></div></div><form id="password-form">${formMessage}${passwordField('current_password','Current password','current-password','')}${passwordField('password','New password')}${passwordField('confirm_password','Confirm new password','new-password','')}<button class="button primary" type="submit">Update password</button><p class="form-note">Changing your password signs out your other sessions.</p></form></section><section class="panel"><div class="panel-header"><div><h2>Account access</h2><p>One central account for Food Monster.</p></div></div><dl class="info-list"><div><dt>Email</dt><dd>${escape(state.user.email)}</dd></div><div><dt>Email status</dt><dd>${state.user.email_verified ? badge('verified') : badge('verification_pending')}</dd></div><div><dt>Account type</dt><dd>${state.user.role==='admin' ? 'Administrator' : 'Customer'}</dd></div></dl><div class="subtle-divider"></div><h3>Sign out everywhere</h3><p class="form-note">End all signed-in sessions, including this one. You can log in again with your password.</p><button class="button secondary" type="button" data-action="logout-all">Sign out all sessions</button></section></div>`;
   }
+  function renderOnboarding() {
+    const progress = state.summary.onboarding || {step:'choose_plan'};
+    const site = state.summary.installations.find(item=>item.id===progress.installation_id);
+    const plan = state.summary.subscriptions.find(item=>item.id===progress.subscription_id);
+    const refresh = recordButton('Refresh status','onboarding-refresh','');
+    const manageSite = '<button type="button" class="button secondary" data-tab="restaurant">Manage my restaurant</button>';
+    const plans = '<a class="button primary" href="plans.html">Choose a Cloud plan</a>';
+    const states = {
+      verify:['Verify your email','Open the verification link sent to your account email.'],
+      choose_plan:['Choose a Cloud plan','Select a package and complete payment or submit a request for approval.'],
+      payment:['Waiting for payment or approval','Your setup continues once Food Monster confirms the subscription.'],
+      plan_action:['Review your Cloud plan','This reservation needs an active plan. Open My restaurant to relink it if another Cloud plan is available.'],
+      reserve:['Reserve your subdomain','Save your site address before entering your Gelato owner details.'],
+      domain_action:['Review your subdomain','Resolve the pending transfer or renew your registration to continue.'],
+      owner:['Set up your Gelato owner account','Food Monster saves your owner profile before the hosting worker creates the site.'],
+      manual_setup:['Hosting setup is pending','The platform team will complete the hosting setup.'],
+      queued:['Your setup is queued','The hosting worker will pick up your saved setup.'],
+      working:['Setting up Gelato','Food Monster is creating the site and applying your owner settings.'],
+      awaiting_https:['Checking HTTPS','Your site link will appear here after the health check passes.'],
+      retry_wait:['Setup will retry','Food Monster will retry from the last saved step.'],
+      failed:['Setup needs attention','The platform team can review and retry your saved setup.'],
+      cancelled:['Setup was cancelled','Open My restaurant to review the reservation.'],
+      ready:['Your Gelato site is ready','Sign in with the owner credentials you chose.']
+    };
+    const [heading, description] = states[progress.step] || states.manual_setup;
+    let controls = site ? manageSite : '';
+    if (progress.step==='choose_plan') controls = plans;
+    if (progress.step==='payment') controls = (plan ? subscriptionCard(plan) : '') + refresh;
+    if (progress.step==='plan_action') controls += ' <button type="button" class="button secondary" data-tab="subscription">View subscriptions</button>';
+    if (progress.step==='owner') controls = recordButton('Enter owner details','hosted-existing',site.id);
+    if (['queued','working','awaiting_https','retry_wait','failed'].includes(progress.step)) controls += ' ' + refresh;
+    if (progress.step==='ready' && /^[a-z0-9.-]+$/i.test(site.domain)) controls = `<a class="button primary" href="https://${escape(site.domain)}">Open Gelato</a> ${manageSite}`;
+    if (progress.step==='reserve') controls = `<form id="onboarding-domain">${formMessage}
+      ${field('business_name','Restaurant name',{value:state.summary.business.business_name,attrs:'minlength="2" maxlength="145"'})}
+      ${field('subdomain','Subdomain',{attrs:'minlength="3" maxlength="40" pattern="[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*" autocomplete="off"'})}
+      <p class="form-note">Your address will end in .${escape(state.summary.base_domain)}.</p><button class="button primary" type="submit">Reserve address</button></form>`;
+    return title('FOOD MONSTER CLOUD','Set up your restaurant','Pick up where you left off whenever you sign in.') + verifyBanner() + `<section class="panel"><div class="panel-header"><div><h2>${heading}</h2><p>${description}</p>${site ? `<p>${escape(site.domain)}</p>` : ''}</div></div>${controls}</section>`;
+  }
   function renderAccount() {
-    const views = {overview:renderOverview,restaurant:renderRestaurant,subscription:renderSubscription,security:renderSecurity};
+    const views = {overview:renderOverview,setup:renderOnboarding,restaurant:renderRestaurant,subscription:renderSubscription,security:renderSecurity};
     if (!views[state.tab]) state.tab = 'overview';
     shell(views[state.tab]());
     document.getElementById('profile-form')?.addEventListener('submit', event => {event.preventDefault(); submit(event.target,async () => {
       const values = formData(event.target); await api('account.update',{name:values.name,business_name:values.business_name});
       await reloadAccount(); toast('Business details saved.');
     });});
+    document.getElementById('onboarding-domain')?.addEventListener('submit',event=>{
+      event.preventDefault();
+      submit(event.target,async()=>{
+        await api('installations.register',{...formData(event.target),hosting_mode:'cloud'});
+        await reloadAccount();
+        toast('Subdomain reserved.');
+      });
+    });
     const installationForm = document.getElementById('installation-form');
     installationForm?.addEventListener('change',event=>{if(event.target.name==='hosting_mode'){state.hosting=event.target.value;renderAccount();}});
     installationForm?.addEventListener('input',event=>{if(event.target.name==='subdomain'){const el=document.getElementById('availability');if(el)el.hidden=true;}});
@@ -747,6 +793,7 @@
       finally { target.disabled = false; }
       return;
     }
+    if (action === 'onboarding-refresh') { await reloadAccount(); return; }
     if (action === 'hosted-existing') {
       const item = state.summary.installations.find(entry=>entry.id===id);
       openDialog('Set up your Gelato site',item.domain,

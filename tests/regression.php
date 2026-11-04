@@ -83,6 +83,8 @@ $state['failPost'] = true;
 $expect('stripe_unavailable',fn()=>$call('stripe.checkout',$settings));
 $expect('stripe_unavailable',fn()=>$call('stripe.checkout',$settings));
 $failed = $rows($buyer)[0]['id'];
+$check($call('account.summary')['onboarding'] === ['step'=>'payment','subscription_id'=>$failed],'Pending payment remains pending after an interrupted checkout');
+$expect('subscription_required',fn()=>$call('installations.register',['business_name'=>'Unpaid','hosting_mode'=>'cloud','subdomain'=>'unpaid-test']));
 $check(count(array_unique($state['keys'])) === 1 && $order($failed)['checkout_id'] === null,'Ambiguous retries used the original key');
 $recover = ['subscription_id'=>$failed];
 $use($observer);
@@ -223,4 +225,23 @@ $db->execute('UPDATE fm_installations SET created_at=? WHERE id=?',[1709208000,$
 $expirySql = FMSubdomains::expirySql($db,0);
 $check((int)$db->one("SELECT $expirySql AS expiry FROM fm_installations i LEFT JOIN fm_subdomain_terms t ON t.installation_id=i.id WHERE i.id=?",[$site])['expiry'] === 1740744000,
     'Queue anniversary preserves leap-day policy');
+$use($sender);
+$check($call('account.summary')['onboarding']['step'] === 'reserve','An active Cloud plan unlocks domain registration');
+$onboardingSite = $call('installations.register',['business_name'=>'Setup restaurant','hosting_mode'=>'cloud','subdomain'=>'setup-restaurant'])['installation']['id'];
+$check($call('account.summary')['onboarding'] === ['step'=>'owner','installation_id'=>$onboardingSite],'A saved reservation resumes at the owner step');
+$ownerInput = ['installation_id'=>$onboardingSite,'business_name'=>'Setup restaurant','location_name'=>'Main',
+    'first_name'=>'Setup','last_name'=>'Owner','timezone'=>'UTC','owner_password'=>'Fixture-Gelato-01!',
+    'owner_password_confirm'=>'Fixture-Gelato-01!'];
+$use($recipient);
+$expect('installation_missing',fn()=>$call('installations.hosted_setup',$ownerInput));
+$use($sender);
+$call('installations.hosted_setup',$ownerInput);
+$expect('setup_unavailable',fn()=>$call('installations.hosted_setup',$ownerInput));
+$queued = $call('account.summary');
+$check($queued['onboarding']['step'] === 'queued' && !str_contains(json_encode($queued),'Fixture-Gelato-01!'),'Queued setup resumes without exposing owner credentials');
+$db->execute("UPDATE fm_hosted_setups SET state='failed' WHERE installation_id=?",[$onboardingSite]);
+$check($call('account.summary')['onboarding']['step'] === 'failed','Provisioning failure is visible to its customer');
+$db->execute("UPDATE fm_hosted_setups SET state='ready' WHERE installation_id=?",[$onboardingSite]);
+$db->execute("UPDATE fm_installations SET status='active' WHERE id=?",[$onboardingSite]);
+$check($call('account.summary')['onboarding']['step'] === 'ready','Ready link is unlocked after provisioning');
 printf("%s regression checks passed (%d).\n", $argv[2], $checkCount);
