@@ -1,0 +1,4 @@
+# Forward the dedicated server API bearer credential to PHP CGI/FastCGI.
+<Files "installation.php">
+    CGIPassAuth On
+</Files>

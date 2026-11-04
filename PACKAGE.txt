@@ -1,0 +1,5 @@
+Food Monster Platform 1.6.1 — Stripe Cloud billing and annual subdomain registrations
+Extract directly into the installed Food Monster website root.
+Run upgrade.php as the existing platform administrator.
+The archive excludes runtime configuration, installation locks, private release files,
+database contents, and the first-install script.

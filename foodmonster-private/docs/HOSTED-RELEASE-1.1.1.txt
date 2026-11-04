@@ -1,0 +1,19 @@
+Gelato Hosted 1.1.1 release verification
+
+ZIP filename  Gelato-Hosted-1.1.1.zip
+SHA-256  801b0361c86a7e7f36141ed21201840b76ab0bffc5cd6497a1c3af305a5b7c6e
+Merged Gelato commit  b0f8ba83e4675225275f5f5641b9e40285440145
+CI build revision  58afea83533fde1364fd08f9f576e97068e15aa1
+
+Publish the ZIP as stable version 1.1.1 in Food Monster Admin → Releases.
+Add these entries to the existing 'hosting' array in the private Food Monster configuration.
+
+    'release_version' => '1.1.1',
+    'release_public_key' => 'HemCxGl5YG3wd0GoOBFr0S4S1exilpfb/6iaCZkayv8=',
+    'release_signatures' => [
+        '1.1.1' => 'S1DJTMTS++Pocg9kjDupTuZO8LufI2eJvq6Xf5GJ6RwR3OoXJJ5PnNUW1yXzloRrl0qfyd/krpXM/CSey726DA==',
+    ],
+
+This public key and detached signature verify this exact ZIP. The release was signed offline
+with a one-time key. Configure an operator-controlled release key for later builds and retain
+the existing release trust settings until all jobs using this build have finished.
