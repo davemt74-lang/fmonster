@@ -86,7 +86,7 @@ final class FMStripeBilling
                 if (time() - (int)$plan['created_at'] >= self::CHECKOUT_RETRY_WINDOW) {
                     throw new FMError(409, 'checkout_review', 'Use Recover checkout on your subscriptions page to check this order with Stripe.');
                 }
-                $home = $config['app_url'] . '/account.html?section=subscription';
+                $home = $config['app_url'] . '/account.html?section=setup';
                 $session = self::request($config, 'POST', '/checkout/sessions', [
                     'mode' => 'subscription',
                     'payment_method_types' => ['card'],
@@ -229,7 +229,7 @@ final class FMStripeBilling
             throw new FMError(404, 'billing_missing', 'This billing account was not found.');
         }
         $session = self::request($config, 'POST', '/billing_portal/sessions', [
-            'customer' => $row['stripe_customer'], 'return_url' => $config['app_url'] . '/account.html?section=subscription',
+            'customer' => $row['stripe_customer'], 'return_url' => $config['app_url'] . '/account.html?section=setup',
         ]);
         return ['url' => self::stripeUrl($session['url'] ?? null, 'billing.stripe.com')];
     }

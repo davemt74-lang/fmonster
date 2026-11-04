@@ -56,17 +56,55 @@ final class FMCommerce
         $subscriptions = $db->query('SELECT * FROM fm_subscriptions WHERE user_id = ? ORDER BY created_at DESC, id DESC', [$user['id']]);
         $installations = $db->query('SELECT * FROM fm_installations WHERE user_id = ? ORDER BY created_at DESC, id DESC', [$user['id']]);
         $business = $db->one('SELECT business_name FROM business_profiles WHERE user_id = ?', [$user['id']]);
+        $subscriptions = FMStripeBilling::decorate($db, array_map(self::subscriptionData(...), $subscriptions));
+        $installations = FMSubdomains::decorate($db, FMLicensing::decorate($db, FMHostedSetup::decorate($db, array_map(self::installationData(...), $installations)), $config));
+        $hosted = FMLicensingUpgrade::hostedReady($db);
         return [
             'user' => self::publicUser($user),
             'business' => $business ?? ['business_name' => ''],
             'packages' => self::publicPackages($db),
-            'subscriptions' => FMStripeBilling::decorate($db, array_map(self::subscriptionData(...), $subscriptions)),
-            'installations' => FMSubdomains::decorate($db, FMLicensing::decorate($db, FMHostedSetup::decorate($db, array_map(self::installationData(...), $installations)), $config)),
+            'subscriptions' => $subscriptions,
+            'installations' => $installations,
+            'onboarding' => self::onboarding($db, $user, $subscriptions, $installations, $hosted),
             'subdomain_transfers' => FMSubdomains::incoming($db, $user['id']),
             'stripe_ready' => FMStripeBilling::ready($db, $config),
-            'hosted_setup_ready' => FMLicensingUpgrade::hostedReady($db),
+            'hosted_setup_ready' => $hosted,
             'base_domain' => self::baseDomain($config),
         ];
+    }
+
+    private static function onboarding(FMDatabase $db, array $user, array $subscriptions, array $installations, bool $hosted): array
+    {
+        if (FMSecurity::verificationRequired() && empty($user['email_verified_at'])) {
+            return ['step' => 'verify'];
+        }
+        $cloud = array_values(array_filter($subscriptions, static fn(array $plan): bool => $plan['hosting_mode'] === 'cloud'));
+        $active = array_column(array_filter($cloud, static fn(array $plan): bool => $plan['status'] === 'active'), 'id');
+        foreach ($installations as $site) {
+            if ($site['hosting_mode'] !== 'cloud' || $site['status'] === 'released') {
+                continue;
+            }
+            $term = $site['subdomain_registration'] ?? [];
+            $setup = $site['hosted_setup']['state'] ?? null;
+            $step = match (true) {
+                ($term['state'] ?? null) === 'expired' || !empty($term['transfer']) => 'domain_action',
+                $site['status'] === 'active' && ($setup === 'ready' || $setup === null) => 'ready',
+                $setup !== null => $setup,
+                !in_array($site['subscription_id'], $active, true) => 'plan_action',
+                $hosted && $site['status'] === 'reserved' && FMLicensing::canClaimHosted($db, $site['id']) => 'owner',
+                default => 'manual_setup',
+            };
+            return ['step' => $step, 'installation_id' => $site['id']];
+        }
+        if ($active !== []) {
+            return ['step' => 'reserve'];
+        }
+        foreach ($cloud as $plan) {
+            if ($plan['status'] === 'pending_review') {
+                return ['step' => 'payment', 'subscription_id' => $plan['id']];
+            }
+        }
+        return ['step' => 'choose_plan'];
     }
 
     private static function publicPackages(FMDatabase $db): array
