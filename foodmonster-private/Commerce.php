@@ -389,6 +389,7 @@ final class FMCommerce
             'licensing_ready' => FMLicensingUpgrade::ready($db),
             'cpanel' => $cpanel,
             'releases' => FMLicensing::registry($db),
+            'release_intake_ready' => FMLicensingUpgrade::releaseIntakeReady($db),
             'customers' => array_map(static fn (array $row): array => self::publicUser($row) + ['business_name' => $row['business_name'] ?? '', 'created_at' => (int) $row['created_at']], $customers),
             'configuration' => [
                 'base_domain' => self::baseDomain($config),

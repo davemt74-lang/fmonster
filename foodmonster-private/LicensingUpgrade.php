@@ -47,10 +47,15 @@ final class FMLicensingUpgrade
         return $row === null ? null : (int)$row['value_text'];
     }
 
+    public static function releaseIntakeReady(FMDatabase $db): bool
+    {
+        return $db->one("SELECT value_text FROM app_meta WHERE key_name = 'release_intake_schema_v1'") !== null;
+    }
+
     public static function apply(FMDatabase $db, string $actor): void
     {
         $migrate = static function () use ($db, $actor): void {
-            foreach (['licensing' => self::KEY, 'hosted_setup' => self::HOSTED_KEY, 'hosted_operations' => self::OPERATIONS_KEY, 'managed_updates' => self::UPDATES_KEY, 'commercial' => self::COMMERCIAL_KEY, 'operator' => 'operator_schema_v1', 'lifecycle' => 'lifecycle_schema_v1'] as $name => $key) {
+            foreach (['licensing' => self::KEY, 'hosted_setup' => self::HOSTED_KEY, 'hosted_operations' => self::OPERATIONS_KEY, 'managed_updates' => self::UPDATES_KEY, 'commercial' => self::COMMERCIAL_KEY, 'operator' => 'operator_schema_v1', 'lifecycle' => 'lifecycle_schema_v1', 'release_intake' => 'release_intake_schema_v1'] as $name => $key) {
                 if ($db->one('SELECT value_text FROM app_meta WHERE key_name = ?', [$key]) !== null) {
                     continue;
                 }

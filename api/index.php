@@ -20,14 +20,15 @@ try {
     if ($method !== $expectedMethod) { header('Allow: ' . $expectedMethod); throw new FMError(405, 'method_not_allowed', 'Use the supported request method for this action.'); }
     $input = in_array($action, ['admin.hosted_jobs', 'admin.hosted_timeline', 'admin.operations', 'admin.customer_timeline'], true) ? $_GET : [];
     if ($method === 'POST') { FMSecurity::checkMutation(); }
-    if ($action === 'admin.release_upload') {
+    if (in_array($action, ['admin.release_upload', 'admin.release_bundle_upload'], true)) {
         $admin = FMSecurity::requireAdmin($db);
         $type = strtolower(trim(explode(';', (string)($_SERVER['CONTENT_TYPE'] ?? ''))[0]));
         if ($type !== 'multipart/form-data') { throw new FMError(415, 'upload_required', 'Choose a ZIP to upload.'); }
         if ($_POST === [] && $_FILES === [] && (int)($_SERVER['CONTENT_LENGTH'] ?? 0) > 0) {
             throw new FMError(413, 'upload_too_large', 'The upload could not be received. Check the hosting upload limit or stage the ZIP in the private release folder.');
         }
-        $data = FMLicensing::uploadRelease($db, $config, $_POST, $_FILES['package'] ?? [], $admin);
+        $upload = $action === 'admin.release_bundle_upload' ? FMLicensing::uploadHostedBundle(...) : FMLicensing::uploadRelease(...);
+        $data = $upload($db, $config, $_POST, $_FILES['package'] ?? [], $admin);
     } else {
         if ($method === 'POST') {
             if ((int)($_SERVER['CONTENT_LENGTH'] ?? 0) > 65536) { throw new FMError(413, 'request_too_large', 'This request is too large.'); }
