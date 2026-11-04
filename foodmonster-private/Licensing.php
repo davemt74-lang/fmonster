@@ -325,10 +325,7 @@ final class FMLicensing
             } finally {
                 fclose($output);
             }
-            [$checksum, $bytes] = self::inspectPackage($config, $name, $bundle['version']);
-            if (!hash_equals($bundle['sha256'], $checksum)) {
-                throw new FMError(409, 'hosted_bundle_checksum', 'The inner ZIP differs from the signed checksum.');
-            }
+            [$checksum, $bytes] = self::inspectPackage($config, $name, $bundle['version'], $bundle['sha256']);
             FMHostedReleaseBundle::assertIdentity($path, $bundle['source_commit']);
             $result = self::createRelease($db, [
                 'version' => $bundle['version'], 'channel' => 'stable', 'notes' => $bundle['notes'], 'package_name' => $name,
@@ -761,10 +758,13 @@ final class FMLicensing
         });
     }
 
-    private static function inspectPackage(array $config, string $name, string $version): array
+    private static function inspectPackage(array $config, string $name, string $version, ?string $signedChecksum = null): array
     {
         [$handle, $checksum, $bytes, $path] = self::openPackage($config, $name);
         try {
+            if ($signedChecksum !== null && !hash_equals($signedChecksum, $checksum)) {
+                throw new FMError(409, 'hosted_bundle_checksum', 'The inner ZIP differs from the signed checksum.');
+            }
             self::validateArchive($path, $version);
             clearstatcache(true, $path);
             $opened = fstat($handle);

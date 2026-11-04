@@ -1,6 +1,6 @@
 # Hosted Gelato setup
 
-Pause the hosted worker cron and let any running job finish. Upload and extract Food Monster 1.6.1 over the existing portal, sign in as administrator, and run `/upgrade.php`. Keep the existing configuration, installation lock, and database. Before resuming the worker, configure the trusted hosted release below.
+Pause the hosted worker cron and let any running job finish. Upload and extract Food Monster 1.7.0 over the existing portal, sign in as administrator, and run `/upgrade.php`. Keep the existing configuration, installation lock, and database. Before resuming the worker, configure the trusted hosted release below.
 
 ## Connect cPanel
 
@@ -27,7 +27,12 @@ Create a dedicated tenant directory and a private worker directory on the same f
 
 The cPanel account must allow creating subdomains with that dedicated document-root layout, and the worker must have filesystem access as the hosting account. Confirm the layout on a disposable subdomain before onboarding customers. If the host restricts subdomains to a shared parent document root, configure separate site document roots or use a dedicated hosting account that permits the required layout. Folder and database separation on a single cPanel account shares the same Unix account boundary.
 
-In **Admin → Releases**, upload and publish the stable **gelato-hosted.zip** produced by the Gelato **Full Deploy Package** workflow. Use the ZIP inside the GitHub artifact. Configure the public key and detached signature in the private file above, and explicitly select its version for new installs. The signature covers the exact ZIP SHA-256 and release version. Obtain the key and signature through your trusted release channel. The portal verifies them before any hosted code runs. Keep the signing key separate from the web server and Git source. See the Gelato **License & Updates** guide for protected CI or offline signing.
+In **Admin → Releases**, use **Import signed bundle** when the Gelato signing
+job supplies the five-file artifact. The portal verifies the configured public key
+and stores the signature with the draft. Review the draft before publishing and
+select its version in `hosting.release_version`.
+
+For a legacy individually signed release, upload and publish the stable **gelato-hosted.zip** produced by the Gelato **Full Deploy Package** workflow. Use the ZIP inside the GitHub artifact. Configure the public key and detached signature in the private file above, and explicitly select its version for new installs. The signature covers the exact ZIP SHA-256 and release version. Obtain the key and signature through your trusted release channel. The portal verifies them before any hosted code runs. Keep the signing key separate from the web server and Git source. See the Gelato **License & Updates** guide for protected CI or offline signing.
 
 The included `HOSTED-RELEASE-1.1.1.txt` lists the exact ZIP checksum and configuration values for the matching deployment package.
 
@@ -63,10 +68,10 @@ Manual and self-hosted installations retain their existing registration and firs
 ## Enable owner-approved hosted updates
 
 1. Set `'managed_updates_enabled' => true` inside the existing private `hosting` settings. The default is off. Resume the `--next` worker cron.
-2. Publish a newer stable hosted ZIP with the Gelato HTTPS health endpoint. Select **Compatible with automatic file updates**, leave **Requires a database upgrade** off, and add the trusted detached signature for this exact version and ZIP. Keep `database/` and `migrations/` identical to the supported installed versions. A release that changes either directory requires manual deployment.
+2. Publish a newer stable hosted ZIP with the Gelato HTTPS health endpoint. Select **Compatible with automatic file updates**, leave **Requires a database upgrade** off, and import the signed bundle or configure the trusted detached signature for a legacy upload. Keep `database/` and `migrations/` identical to the supported installed versions. A release that changes either directory requires manual deployment.
 3. Sign into the owning Food Monster account, open **My restaurant**, select **Apply hosted update**, and approve the displayed domain and version. The next available cron run can process it. The saved automatic-update preference never queues an update.
 
-The portal currently trusts one Ed25519 public key. Use an operator-controlled offline or protected CI key for future releases. If you change the trusted key, re-sign the exact archive selected for new installs with that key, or select a newer archive signed by it. Keep the private key outside the web account. Already deployed sites can be updated without re-signing their local files.
+The portal currently trusts one Ed25519 public key. Use an operator-controlled offline or protected CI key for future releases. Finish pending jobs before rotating the key. After rotation, select a new bundle signed by the new key, or re-sign an individually uploaded archive and update its private configuration signature. Keep the private key outside the web account. Already deployed sites can be updated without re-signing their local files.
 
 The worker verifies the current domain and version, then stages the signed ZIP beside a private backup directory on the same filesystem. It carries forward configuration, managed runtime paths, and ACME files. The database and external private Gelato storage stay in place. Allow enough cPanel quota for the staged release and a private copy of the previous code per successful update. Schedule updates for a low-traffic window because swapping directories can briefly interrupt requests. The web PHP runtime must revalidate updated code. If PHP OPcache timestamp validation is disabled, use a manual deployment with the hosting provider's PHP cache reset procedure.
 
