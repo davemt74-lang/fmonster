@@ -1,0 +1,15 @@
+Food Monster Platform 1.6.1 — Existing-site upgrade
+
+1. Back up the existing Food Monster files and MySQL/MariaDB database.
+2. Pause the hosted worker cron, then upload this ZIP to the Food Monster document root and extract it there.
+   Keep the existing private config.php, installation lock and data.
+3. Sign in to Food Monster as an existing platform administrator.
+4. Open https://foodmonster.xyz/upgrade.php and select Run database upgrade.
+5. Run Admin → cPanel → Run preflight, then follow foodmonster-private/docs/HOSTED-SETUP.md to test a disposable subdomain.
+6. Open Admin → Update analytics to see current versions and release outcomes.
+   To enable owner-approved hosted updates, follow the opt-in and signing instructions in HOSTED-SETUP.md.
+7. Set monthly, quarterly, or annual prices in Admin → Packages. See foodmonster-private/docs/BILLING.md for Stripe setup, renewals, and transfers.
+
+PHP 8.2+, MySQL/MariaDB, HTTPS and the included Apache access rules are required.
+Enable PHP ZipArchive and configure a private package directory to publish ZIPs.
+Read foodmonster-private/docs/LICENSING-UPGRADE.md for activation and release publishing.
