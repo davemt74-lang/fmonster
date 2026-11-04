@@ -43,3 +43,15 @@ All actions use the core router's `{ok,data}` / `{ok:false,error}` wrapper and C
 - Package mutations: `{package,message}`; subscription mutations: `{subscription,message}`.
 
 Subscription responses report `expired` once the stored expiry passes, even if the persisted prior lifecycle value is `active`. Eligibility always checks time on the server. Installation responses include `can_release`, deployment/activation timestamps, and DNS challenge fields. Identity, roles, prices, status, expiry eligibility, package snapshots, limits, and audit actors are derived server-side.
+
+### Review an expired Cloud reservation
+
+In **Admin → Operations → Expiring domains**, choose **Review retirement** for an
+unused reservation whose annual registration expired at least 30 days ago.
+Enter the exact hostname and record the reason for releasing it. The portal
+checks the saved, tested cPanel account, public address and alias records, and
+the configured hosting directories before releasing the portal's domain claim.
+Any existing hosting job, license, active transfer, DNS record, or hosting file
+blocks retirement. Wildcard DNS can also block a retirement. The audit log
+records the reviewing administrator and reason, and the registration history
+remains available.

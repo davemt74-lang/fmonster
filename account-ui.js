@@ -533,7 +533,7 @@
         if (row.reason) details.push(['Review reason',row.reason.replaceAll('_',' ')]);
         if (row.expires_at) details.push(['Expires',dateTime(row.expires_at)]);
         if (row.updated_at) details.push(['Last changed',dateTime(row.updated_at)]);
-        return `<article class="installation-card"><h3>${escape(row.domain || row.package_name || row.customer_name)}</h3>${infoRows(details)}<div class="card-actions">${recordButton('Customer timeline','operations-timeline',row.customer_id)}${row.can_retry ? recordButton('Retry setup','hosted-command-retry',row.id) : ''}${row.can_recover ? recordButton('Recover checkout','operations-recover',row.id) : ''}</div></article>`;
+        return `<article class="installation-card"><h3>${escape(row.domain || row.package_name || row.customer_name)}</h3>${infoRows(details)}<div class="card-actions">${recordButton('Customer timeline','operations-timeline',row.customer_id)}${row.can_retry ? recordButton('Retry setup','hosted-command-retry',row.id) : ''}${row.can_recover ? recordButton('Recover checkout','operations-recover',row.id) : ''}${row.can_retire ? button('Review retirement',`type="button" data-action="operations-retire" data-id="${escape(row.id)}" data-domain="${escape(row.domain)}"`,'secondary small') : ''}</div></article>`;
       }).join('');
       draw(cards + (cards ? '' : '<p>No matching records.</p>') + `<div class="card-actions"><span>Page ${data.page}</span>${data.page>1?recordButton('Previous','operations-page',data.page-1):''}${data.has_more?recordButton('Next','operations-page',data.page+1):''}</div>`);
     } catch (error) {
@@ -739,6 +739,18 @@
       const subscriptions = data.subscriptions.map(row=>[row.package_name,[row.status,billingLabels[row.billing_state],row.billing_review].filter(Boolean).join(' · ')]);
       const sites = data.sites.map(row=>[row.domain,[row.status,hostedState[row.setup_state],row.expires_at ? dateTime(row.expires_at) : ''].filter(Boolean).join(' · ')]);
       openDialog(data.customer.name,data.customer.email,`<h3>Subscriptions</h3>${subscriptions.length?infoRows(subscriptions):'<p>No subscriptions.</p>'}<h3>Sites</h3>${sites.length?infoRows(sites):'<p>No sites.</p>'}<h3>Recent events</h3>${infoRows(events)}`,async()=>{},'Close');
+      return;
+    }
+    if (action === 'operations-retire') {
+      const domain = target.dataset.domain;
+      openDialog('Review subdomain retirement',`Type ${domain} to release this expired reservation after the live hosting checks pass.`,
+        field('confirm_domain','Confirm hostname',{attrs:'autocomplete="off" maxlength="253"'}) +
+        '<div class="field"><label for="retirement-note">Review note</label><textarea id="retirement-note" name="note" required minlength="10" maxlength="2000"></textarea></div>',
+        async values=>{
+          await api('admin.subdomain_retire',{...values,installation_id:id});
+          await reloadAdmin();
+          toast('The expired reservation was released.');
+        },'Check and release reservation',true);
       return;
     }
     if (action === 'operations-recover') {

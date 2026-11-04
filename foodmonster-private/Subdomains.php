@@ -6,6 +6,7 @@ final class FMSubdomains
 {
     private const RENEWAL_WINDOW = 30 * 86400;
     private const TRANSFER_WINDOW = 7 * 86400;
+    private const RETIREMENT_GRACE = 30 * 86400;
 
     public static function dispatch(string $action, array $input, FMDatabase $db): ?array
     {
@@ -99,6 +100,80 @@ final class FMSubdomains
             : "CAST(strftime('%s', $base, 'unixepoch', '+1 year',
                 CASE WHEN strftime('%m-%d', $base, 'unixepoch') = '02-29' THEN '-1 day' ELSE '+0 days' END) AS INTEGER)";
         return "COALESCE(t.expires_at, $anniversary)";
+    }
+
+    public static function canReviewRetirement(FMDatabase $db, array $site, int $expiry, int $now): bool
+    {
+        return $site['status'] === 'reserved' && $expiry + self::RETIREMENT_GRACE <= $now
+            && self::transferable($db, $site) && self::pending($db, $site['id']) === null;
+    }
+
+    public static function retire(FMDatabase $db, array $config, array $input, array $admin): array
+    {
+        FMSecurity::requireVerified($admin);
+        FMSecurity::rateLimit($db, 'subdomain_retirement:' . $admin['id'], 12, 3600);
+        $id = self::id($input, 'installation_id');
+        $confirmation = $input['confirm_domain'] ?? '';
+        $note = FMAuth::text($input, 'note', 2000);
+        if (strlen($note) < 10) {
+            throw new FMError(422, 'retirement_note_required', 'Record at least 10 characters about the retirement review.');
+        }
+        $site = self::site($db, $id, $admin, true);
+        $parent = (string)$config['base_domain'];
+        $label = $site['subdomain'];
+        if (!is_string($confirmation) || $confirmation !== $site['domain'] || !is_string($label)
+            || !preg_match('/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/D', $label) || strlen($label) > 40
+            || !filter_var($parent, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) || "$label.$parent" !== $site['domain']) {
+            throw new FMError(422, 'retirement_confirmation', 'Type the exact Cloud hostname to confirm this review.');
+        }
+        $expiry = self::expiry($db, $site);
+        if ($expiry === null || !self::canReviewRetirement($db, $site, $expiry, time())) {
+            throw new FMError(409, 'retirement_ineligible', 'Retirement requires an unused reservation at least 30 days past expiry with no pending transfer.');
+        }
+        [, $tenant, $private] = FMHostingPreflight::paths($config);
+        $connection = FMHostingSettings::connection($db, $config);
+        if (empty($connection['tested_at'])) {
+            throw new FMError(409, 'cpanel_test_required', 'Test the saved cPanel connection before reviewing retirement.');
+        }
+        $cpanel = new FMCpanel($connection, $config);
+        $cpanel->assertDomainUnused($parent, $site['domain']);
+        $lookup = ($config['app_env'] ?? '') === 'test' ? ($config['hosting']['test_retirement_dns'] ?? null) : null;
+        $records = is_callable($lookup) ? $lookup($site['domain']) : (function_exists('dns_get_record')
+            ? @dns_get_record($site['domain'] . '.', DNS_A | DNS_AAAA | DNS_CNAME) : false);
+        if ($records !== []) {
+            throw new FMError(409, 'retirement_dns_present', 'Retirement requires a successful DNS check with no address or alias records.');
+        }
+
+        return $db->transaction(static function () use ($db, $id, $site, $admin, $tenant, $private, $connection, $note): array {
+            FMCommerce::lockUser($db, $site['user_id']);
+            $current = self::site($db, $id, $admin, true);
+            $expiry = self::expiry($db, $current);
+            $settings = $db->one('SELECT hostname, username, encrypted_token, tested_at FROM fm_hosting_settings WHERE id = 1'
+                . ($db->driver === 'mysql' ? ' FOR UPDATE' : ''));
+            $expectedSettings = ['hostname' => $connection['hostname'], 'username' => $connection['username'],
+                'encrypted_token' => $connection['encrypted_token'], 'tested_at' => $connection['tested_at']];
+            if ($current['user_id'] !== $site['user_id'] || $current['domain'] !== $site['domain'] || $expiry === null
+                || !self::canReviewRetirement($db, $current, $expiry, time())
+                || $settings !== $expectedSettings) {
+                throw new FMError(409, 'retirement_changed', 'The registration or cPanel connection changed. Refresh and review it again.');
+            }
+            foreach ([$tenant => $current['subdomain'], $private => $id] as $root => $name) {
+                $path = "$root/$name";
+                clearstatcache(true, $path);
+                if (!is_readable($root) || !is_executable($root) || @lstat($path) !== false) {
+                    throw new FMError(409, 'retirement_files_present', 'The hosting directories must be accessible and contain no files for this registration.');
+                }
+            }
+            $now = time();
+            if ($db->execute('DELETE FROM fm_domain_claims WHERE installation_id = ? AND domain = ?', [$id, $current['domain']]) !== 1
+                || $db->execute("UPDATE fm_installations SET status = 'released', released_at = ?, updated_at = ? WHERE id = ? AND released_at IS NULL",
+                    [$now, $now, $id]) !== 1) {
+                throw new FMError(409, 'retirement_changed', 'The registration changed. Refresh and review it again.');
+            }
+            FMSecurity::audit($db, $admin['id'], 'subdomain.retired', ['installation_id' => $id,
+                'owner_id' => $current['user_id'], 'domain' => $current['domain'], 'expired_at' => $expiry, 'note' => $note]);
+            return ['domain' => $current['domain'], 'released_at' => $now];
+        });
     }
 
     private static function anniversary(int $start): int

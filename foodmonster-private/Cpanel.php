@@ -45,6 +45,30 @@ final class FMCpanel
         }
     }
 
+    public function assertDomainUnused(string $parent, string $domain): void
+    {
+        $data = $this->call('domains');
+        $main = $data['main_domain'] ?? null;
+        if (!is_string($main) || $main === '') {
+            throw new FMError(409, 'retirement_inventory_unavailable', 'cPanel did not return a complete domain inventory.');
+        }
+        $groups = ['main_domain' => [$main]];
+        foreach (['addon_domains', 'parked_domains', 'sub_domains'] as $group) {
+            $list = $data[$group] ?? null;
+            if (!is_array($list) || !array_is_list($list) || count(array_filter($list, 'is_string')) !== count($list)) {
+                throw new FMError(409, 'retirement_inventory_unavailable', 'cPanel did not return a complete domain inventory.');
+            }
+            $groups[$group] = $list;
+        }
+        $normal = static fn(string $name): string => strtolower(rtrim($name, '.'));
+        if (!in_array($parent, array_map($normal, [$main, ...$groups['addon_domains']]), true)) {
+            throw new FMError(409, 'cpanel_domain_missing', 'The configured parent domain is not owned by the saved cPanel account.');
+        }
+        if (in_array($domain, array_map($normal, array_merge(...array_values($groups))), true)) {
+            throw new FMError(409, 'retirement_domain_present', 'cPanel still lists this hostname. Review the active domain in cPanel.');
+        }
+    }
+
     public function call(string $operation, array $parameters = []): array
     {
         $endpoint = self::ENDPOINTS[$operation] ?? null;
