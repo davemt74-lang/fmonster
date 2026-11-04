@@ -65,6 +65,7 @@ return [
         'enabled' => false,
         'require_verification' => true, // Applies only when email is enabled.
         'transport' => 'mail',
+        'lifecycle_enabled' => false,
         'from' => 'accounts@foodmonster.xyz',
         'from_name' => 'Food Monster',
         // Test-only capture: app_env=test/development AND localhost app_url required.
