@@ -116,19 +116,20 @@ final class FMStripeBilling
         });
     }
 
-    public static function recover(FMDatabase $db, array $config, array $input): array
+    public static function recover(FMDatabase $db, array $config, array $input, bool $operator = false): array
     {
-        $actor = FMSecurity::requireUser($db);
+        $actor = $operator ? FMSecurity::requireAdmin($db) : FMSecurity::requireUser($db);
         FMSecurity::requireVerified($actor);
         FMSecurity::rateLimit($db, 'billing_recover:' . $actor['id'], 10, 3600);
         if (!self::ready($db, $config)) {
             throw new FMError(409, 'billing_unavailable', 'Stripe billing is unavailable.');
         }
         $id = $input['subscription_id'] ?? null;
-        return $db->transaction(static function () use ($db, $config, $actor, $id): array {
-            FMCommerce::lockUser($db, $actor['id']);
+        $owner = $operator && self::localId($id) ? (self::billingRow($db, $id)['user_id'] ?? '') : $actor['id'];
+        return $db->transaction(static function () use ($db, $config, $actor, $owner, $id): array {
+            FMCommerce::lockUser($db, $owner);
             $row = self::localId($id) ? self::billingRow($db, $id) : null;
-            if (!$row || $row['user_id'] !== $actor['id'] || (bool)$row['live_mode'] !== ($config['stripe']['mode'] === 'live')) {
+            if (!$row || $row['user_id'] !== $owner || (bool)$row['live_mode'] !== ($config['stripe']['mode'] === 'live')) {
                 throw new FMError(404, 'billing_missing', 'This billing account was not found.');
             }
             if ($row['billing_state'] !== 'checkout' || $row['stripe_id'] !== null) {
@@ -145,6 +146,8 @@ final class FMStripeBilling
                     $row['checkout_id'] = $session['id'];
                     $db->execute('UPDATE fm_stripe_billing SET checkout_id = ? WHERE subscription_id = ?', [$session['id'], $id]);
                     self::reconcile($db, $config, $row, $subscription, null, $session);
+                    self::clearReview($db, $id);
+                    FMSecurity::audit($db, $actor['id'], 'subscription.stripe_checkout_recovered', ['subscription_id' => $id]);
                     return ['message' => 'Stripe checkout checked. Your subscription shows the latest payment status.'];
                 }
                 if ($status === 'open') {
@@ -158,6 +161,7 @@ final class FMStripeBilling
             }
             // An unmatched session was never handed to the customer. The redirect requires a committed checkout ID.
             self::expireCheckout($db, ['state' => $row['billing_state'], 'stripe_id' => $row['stripe_id']], $id);
+            self::clearReview($db, $id);
             FMSecurity::audit($db, $actor['id'], 'subscription.stripe_checkout_recovered', ['subscription_id' => $id]);
             return ['message' => 'Checkout cleared. You can select your plan again.'];
         });
@@ -277,14 +281,37 @@ final class FMStripeBilling
         if (!$plan) {
             return;
         }
-        $db->transaction(static function () use ($db, $config, $id, $plan, $live, $paidInvoice): void {
+        $failure = $db->transaction(static function () use ($db, $config, $id, $plan, $live, $paidInvoice): ?FMError {
             FMCommerce::lockUser($db, $plan['user_id']);
             $row = self::billingRow($db, $plan['id']);
             if (!$row || (bool)$row['live_mode'] !== $live) {
-                return;
+                return null;
             }
-            self::reconcile($db, $config, $row, $id, $paidInvoice);
+            try {
+                if (self::reconcile($db, $config, $row, $id, $paidInvoice)) {
+                    self::clearReview($db, $row['id']);
+                }
+            } catch (FMError $error) {
+                if (!in_array($error->errorCode, ['stripe_invoice_mismatch', 'stripe_price_mismatch', 'stripe_subscription_mismatch', 'stripe_customer_mismatch'], true)
+                    || !FMLicensingUpgrade::operatorReady($db)) {
+                    throw $error;
+                }
+                $db->execute('DELETE FROM fm_billing_reviews WHERE subscription_id = ?', [$row['id']]);
+                $db->execute('INSERT INTO fm_billing_reviews (subscription_id, reason, updated_at) VALUES (?,?,?)', [$row['id'], $error->errorCode, time()]);
+                return $error;
+            }
+            return null;
         });
+        if ($failure !== null) {
+            throw $failure;
+        }
+    }
+
+    private static function clearReview(FMDatabase $db, string $id): void
+    {
+        if (FMLicensingUpgrade::operatorReady($db)) {
+            $db->execute('DELETE FROM fm_billing_reviews WHERE subscription_id = ?', [$id]);
+        }
     }
 
     private static function billingRow(FMDatabase $db, string $id): ?array
@@ -293,12 +320,12 @@ final class FMStripeBilling
             FROM fm_subscriptions s JOIN fm_stripe_billing b ON b.subscription_id = s.id WHERE s.id = ?', [$id]);
     }
 
-    private static function reconcile(FMDatabase $db, array $config, array $row, string $id, ?string $paidInvoice, ?array $session = null): void
+    private static function reconcile(FMDatabase $db, array $config, array $row, string $id, ?string $paidInvoice, ?array $session = null): bool
     {
         $recovering = $session !== null;
         $terminal = in_array($row['billing_state'], ['cancelled', 'expired'], true);
         if ($terminal && ($paidInvoice === null || $row['stripe_id'] === null)) {
-            return;
+            return false;
         }
         if ($row['stripe_id'] !== null && $row['stripe_id'] !== $id) {
             throw new FMError(409, 'stripe_subscription_mismatch', 'The Stripe subscription does not match the checkout.');
@@ -335,6 +362,7 @@ final class FMStripeBilling
         }
         $paidEvidence = $paidInvoice !== null || ($recovering && ($invoice['status'] ?? null) === 'paid');
         self::applySnapshot($db, $row, $remote, $customer, is_array($invoice) ? $invoice : [], $paidEvidence);
+        return true;
     }
 
     private static function applySnapshot(FMDatabase $db, array $plan, array $remote, string $customer, array $invoice, bool $paidEvidence): void

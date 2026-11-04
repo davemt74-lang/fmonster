@@ -6,7 +6,7 @@
   const page = document.body.dataset.page;
   const state = {
     user: null, csrf: '', ready: false, boot: {}, summary: null, admin: null,
-    packages: [], stripeReady: false, stripeCheckoutEnabled: true, hostedPage: 1, hostedLoad: 0, analyticsLoad: 0, interval: 'monthly', hosting: 'cloud', tab: 'overview',
+    packages: [], stripeReady: false, stripeCheckoutEnabled: true, opsView: 'setup', opsPage: 1, opsEmail: '', opsLoad: 0, hostedPage: 1, hostedLoad: 0, analyticsLoad: 0, interval: 'monthly', hosting: 'cloud', tab: 'overview',
     token: new URLSearchParams(location.hash.slice(1)).get('token') || ''
   };
   if (['verify', 'reset'].includes(page) && location.hash) {
@@ -162,7 +162,7 @@
     app.innerHTML = `${header()}<main id="portal-main" class="service-unavailable"><div class="eyebrow">ACCOUNT SERVICES</div><h1>Your account starts here.</h1><p>${escape(state.bootError || unavailableText)}</p><div class="card-actions"><a class="button primary" href="signup.html">View sign-up page ${icon('arrow')}</a><a class="button secondary" href="plans.html">View packages</a></div><div class="preview-note">The customer dashboard and admin area load real account data after server setup.</div></main>`;
   }
   function shell(content, admin = false) {
-    const tabs = admin ? [['packages','grid','Packages'],['subscriptions','card','Subscriptions'],['installations','server','Installations'],['subdomains','cloud','Subdomains'],['licenses','lock','Licenses'],['releases','grid','Releases'],['updates','arrow','Updates'],['analytics','grid','Update analytics'],['cpanel','server','cPanel'],['hosting','cloud','Hosting jobs'],['customers','users','Customers']] : [['overview','grid','Overview'],['restaurant','shop','My restaurant'],['subscription','card','Subscription'],['security','lock','Security']];
+    const tabs = admin ? [['operations','grid','Operations'],['packages','grid','Packages'],['subscriptions','card','Subscriptions'],['installations','server','Installations'],['subdomains','cloud','Subdomains'],['licenses','lock','Licenses'],['releases','grid','Releases'],['updates','arrow','Updates'],['analytics','grid','Update analytics'],['cpanel','server','cPanel'],['hosting','cloud','Hosting jobs'],['customers','users','Customers']] : [['overview','grid','Overview'],['restaurant','shop','My restaurant'],['subscription','card','Subscription'],['security','lock','Security']];
     app.innerHTML = `${header({label:admin ? 'ADMIN' : 'MY ACCOUNT'})}<div class="portal-shell"><aside class="portal-sidebar" aria-label="${admin ? 'Admin' : 'Account'} sections"><div class="sidebar-eyebrow">${admin ? 'PLATFORM' : 'YOUR WORKSPACE'}</div><nav class="portal-tabs">${tabs.map(([key,ico,label])=>`<button type="button" class="portal-tab${state.tab === key ? ' active' : ''}" data-tab="${key}" ${state.tab === key ? 'aria-current="page"' : ''}>${icon(ico)}<span>${label}</span></button>`).join('')}</nav><div class="sidebar-bottom"><span class="sidebar-eyebrow">FOOD MONSTER</span><p>${admin ? 'Subscriptions. Hosting. One home.' : 'Your business. Your hosting choice.'}</p><a href="index.html" class="quiet-link">Back to website ↗</a></div></aside><main class="portal-main" id="portal-main">${admin ? verifyBanner() : ''}${content}</main></div>`;
   }
   const title = (eyebrow, heading, description, action = '') => `<div class="portal-title"><div><div class="eyebrow">${escape(eyebrow)}</div><h1>${escape(heading)}</h1><p>${escape(description)}</p></div>${action}</div>`;
@@ -452,6 +452,40 @@
   const hostedActions = {retry:'Retry setup',cancel:'Cancel setup',release:'Verify cleanup and release'};
   const dateTime = value => value ? new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'short'}).format(new Date(Number(value) * 1000)) : '—';
 
+  const operationsViews = {setup:'Pending setup',hosting:'Hosting exceptions',billing:'Billing follow-up',domains:'Expiring domains',customers:'Customers'};
+  async function loadOperations() {
+    const request = ++state.opsLoad;
+    const heading = title('PLATFORM ADMIN','Operations','Find customers and follow up on billing, setup, and domain renewals.');
+    const filters = `<section class="panel"><div class="card-actions" role="group" aria-label="Operations views">${Object.entries(operationsViews).map(([view,label])=>`<button type="button" class="button ${view===state.opsView?'primary':'secondary'} small" aria-pressed="${view===state.opsView}" data-action="operations-view" data-id="${view}">${label}</button>`).join('')}</div><form id="operations-search"><div class="field"><label for="operations-email">Customer email</label><input id="operations-email" type="email" name="email" maxlength="254" value="${escape(state.opsEmail)}" placeholder="name@example.com"></div><button class="button secondary small">Filter</button> ${recordButton('Clear filter','operations-clear','')}</form></section>`;
+    const draw = content => {
+      shell(heading + filters + `<section class="panel">${content}</section>`,true);
+      document.getElementById('operations-search').addEventListener('submit',event=>{
+        event.preventDefault();
+        state.opsEmail = new FormData(event.target).get('email').trim();
+        state.opsPage = 1;
+        loadOperations();
+      });
+    };
+    draw('<p role="status">Loading operations…</p>');
+    try {
+      const data = await api('admin.operations',undefined,{view:state.opsView,page:state.opsPage,email:state.opsEmail});
+      if (request !== state.opsLoad || state.tab !== 'operations') return;
+      const cards = data.rows.map(row=>{
+        const details = [['Email',row.email]];
+        if (row.state) details.push(['Status',hostedState[row.state] || billingLabels[row.state] || row.state]);
+        if (row.stage) details.push(['Hosting stage',hostedStage[row.stage] || row.stage]);
+        if (row.reason) details.push(['Review reason',row.reason.replaceAll('_',' ')]);
+        if (row.expires_at) details.push(['Expires',dateTime(row.expires_at)]);
+        if (row.updated_at) details.push(['Last changed',dateTime(row.updated_at)]);
+        return `<article class="installation-card"><h3>${escape(row.domain || row.package_name || row.customer_name)}</h3>${infoRows(details)}<div class="card-actions">${recordButton('Customer timeline','operations-timeline',row.customer_id)}${row.can_retry ? recordButton('Retry setup','hosted-command-retry',row.id) : ''}${row.can_recover ? recordButton('Recover checkout','operations-recover',row.id) : ''}</div></article>`;
+      }).join('');
+      draw(cards + (cards ? '' : '<p>No matching records.</p>') + `<div class="card-actions"><span>Page ${data.page}</span>${data.page>1?recordButton('Previous','operations-page',data.page-1):''}${data.has_more?recordButton('Next','operations-page',data.page+1):''}</div>`);
+    } catch (error) {
+      if (request !== state.opsLoad || state.tab !== 'operations') return;
+      draw(`<p role="alert">${escape(error.message)}</p>${error.code==='upgrade_required'?'<a class="button primary" href="upgrade.php">Open database upgrade</a>':''}`);
+    }
+  }
+
   async function loadHostedJobs(jobPage = 1) {
     const request = ++state.hostedLoad;
     const heading = title('PLATFORM ADMIN','Hosting jobs','Follow provisioning and manage exceptions. The CLI worker processes requests from this queue.',
@@ -545,6 +579,7 @@
     return `<section class="panel"><div class="panel-header"><div><h2>Platform services</h2><p>What is connected to this installation.</p></div></div><div class="configuration-list"><div class="configuration-item"><span>Cloud domain</span><strong>${escape(config.base_domain || 'Not configured')}</strong></div><div class="configuration-item"><span>Subscriptions</span><span class="badge">${config.payments_configured ? 'Stripe and manual' : 'Manual review'}</span></div><div class="configuration-item"><span>Payment processing</span><span class="badge">${config.payments_configured ? 'Connected' : 'Not connected'}</span></div><div class="configuration-item"><span>Automatic hosting</span><span class="badge">${config.hosting_configured ? 'Connected' : 'Not connected'}</span></div><div class="configuration-item"><span>Gelato distribution & updates</span><span class="badge">${config.gelato_distribution_configured ? 'Connected' : 'Not connected'}</span></div><div class="configuration-item"><span>Domain verification</span><span class="badge ${config.dns_lookup_available ? 'positive' : ''}">${config.dns_lookup_available ? 'DNS TXT available' : 'DNS lookup unavailable'}</span></div></div></section>`;
   }
   async function reloadAdmin() {
+    if (state.tab === 'operations') return loadOperations();
     if (state.tab === 'analytics') {
       await loadReleaseAnalytics();
       return;
@@ -554,7 +589,7 @@
       return;
     }
     state.admin=await api('admin.overview');
-    if (!['hosting','analytics'].includes(state.tab)) renderAdmin();
+    if (!['operations','hosting','analytics'].includes(state.tab)) renderAdmin();
   }
   function openDialog(titleText,description,fields,onSubmit,submitLabel='Save changes',danger=false) {
     const previous=document.activeElement;
@@ -634,6 +669,30 @@
       await handleSubdomainAction(action,id);
       return;
     }
+    if (['operations-view','operations-page','operations-clear'].includes(action)) {
+      if (action === 'operations-view') state.opsView = id;
+      if (action === 'operations-clear') state.opsEmail = '';
+      state.opsPage = action === 'operations-page' ? Number(id) : 1;
+      await loadOperations();
+      return;
+    }
+    if (action === 'operations-timeline') {
+      const data = await api('admin.customer_timeline',undefined,{customer_id:id});
+      if (state.tab !== 'operations') return;
+      const events = data.events.map(event=>[dateTime(event.at),[event.title,event.domain].filter(Boolean).join(' · ')]);
+      const subscriptions = data.subscriptions.map(row=>[row.package_name,[row.status,billingLabels[row.billing_state],row.billing_review].filter(Boolean).join(' · ')]);
+      const sites = data.sites.map(row=>[row.domain,[row.status,hostedState[row.setup_state],row.expires_at ? dateTime(row.expires_at) : ''].filter(Boolean).join(' · ')]);
+      openDialog(data.customer.name,data.customer.email,`<h3>Subscriptions</h3>${subscriptions.length?infoRows(subscriptions):'<p>No subscriptions.</p>'}<h3>Sites</h3>${sites.length?infoRows(sites):'<p>No sites.</p>'}<h3>Recent events</h3>${infoRows(events)}`,async()=>{},'Close');
+      return;
+    }
+    if (action === 'operations-recover') {
+      openDialog('Recover Stripe checkout','This checks Stripe for a verified payment and expires an open unpaid checkout. The customer can start a new checkout after recovery.','',async()=>{
+        await api('admin.stripe_recover',{subscription_id:id});
+        await reloadAdmin();
+        toast('Stripe checkout checked.');
+      },'Check checkout');
+      return;
+    }
     if (action === 'refresh-analytics') {
       await loadReleaseAnalytics();
       return;
@@ -662,7 +721,7 @@
       if (!messages[command]) return;
       openDialog(hostedActions[command],messages[command],'',async()=>{
         await api('admin.hosted_command',{installation_id:id,command});
-        await loadHostedJobs(state.hostedPage);
+        await reloadAdmin();
         toast('Request queued for the hosting worker.');
       },hostedActions[command],command === 'cancel');
       return;
@@ -740,7 +799,7 @@
     if(toggle){const input=document.getElementById(toggle.dataset.password);const visible=input.type==='password';input.type=visible?'text':'password';toggle.setAttribute('aria-pressed',String(visible));toggle.setAttribute('aria-label',(visible?'Hide ':'Show ')+input.labels[0].textContent.toLowerCase());return;}
     if(event.target.closest('[data-close-dialog]')){dialog.close();return;}
     const tab=event.target.closest('[data-tab]');
-    if(tab){state.tab=tab.dataset.tab;history.replaceState(null,'',location.pathname+'?section='+encodeURIComponent(state.tab));if(page==='admin'){if(['hosting','analytics'].includes(state.tab)||!state.admin){try{await reloadAdmin();}catch(error){toast(error.message);}}else renderAdmin();}else renderAccount();return;}
+    if(tab){state.tab=tab.dataset.tab;history.replaceState(null,'',location.pathname+'?section='+encodeURIComponent(state.tab));if(page==='admin'){if(['operations','hosting','analytics'].includes(state.tab)||!state.admin){try{await reloadAdmin();}catch(error){toast(error.message);}}else renderAdmin();}else renderAccount();return;}
     const interval=event.target.closest('[data-interval]');if(interval){state.interval=interval.dataset.interval;renderPlans();return;}
     const hosting=event.target.closest('[data-plan-hosting]');if(hosting){state.hosting=hosting.dataset.planHosting;renderPlans();return;}
     const copy=event.target.closest('[data-copy]');if(copy){try{await navigator.clipboard.writeText(copy.dataset.copy);toast('Copied to clipboard.');}catch{toast('Copy is unavailable. Select and copy the record text.');}return;}
@@ -755,11 +814,11 @@
     }
     if(!state.ready){renderUnavailable();return;}
     if(!state.user){location.replace(page==='admin'?'login.html?next=admin':'login.html');return;}
-    state.tab=new URLSearchParams(location.search).get('section') || (page==='admin'?'packages':'overview');
+    state.tab=new URLSearchParams(location.search).get('section') || (page==='admin'?'operations':'overview');
     try{
       if(page==='admin'){
         if(state.user.role!=='admin'){app.innerHTML=`${header()}<main id="portal-main" class="service-unavailable"><h1>Administrator access required.</h1><p>This area is available to Food Monster platform administrators.</p><a class="button primary" href="account.html">Go to my account</a></main>`;return;}
-        if(!['packages','subscriptions','installations','subdomains','licenses','releases','updates','analytics','cpanel','hosting','customers'].includes(state.tab))state.tab='packages';
+        if(!['operations','packages','subscriptions','installations','subdomains','licenses','releases','updates','analytics','cpanel','hosting','customers'].includes(state.tab))state.tab='operations';
         await reloadAdmin();
       }else await reloadAccount();
     }catch(error){state.bootError=error.message;renderUnavailable();}

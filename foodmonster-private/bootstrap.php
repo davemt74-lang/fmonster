@@ -22,6 +22,8 @@ require_once __DIR__ . '/ManagedUpdates.php';
 require_once __DIR__ . "/Subdomains.php";
 require_once __DIR__ . "/StripeBilling.php";
 
+require_once __DIR__ . '/OperatorDashboard.php';
+
 function fm_config_path(): string
 {
     return defined('FOODMONSTER_CONFIG_PATH') ? (string)FOODMONSTER_CONFIG_PATH : (getenv('FOODMONSTER_CONFIG') ?: __DIR__ . '/config.php');
