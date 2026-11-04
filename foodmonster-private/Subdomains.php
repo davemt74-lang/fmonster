@@ -90,6 +90,17 @@ final class FMSubdomains
             [$recipient, time()]);
     }
 
+    // Used by bounded queues with aliases i (installation) and t (renewal term).
+    public static function expirySql(FMDatabase $db, int $since): string
+    {
+        $base = "(CASE WHEN i.created_at > $since THEN i.created_at ELSE $since END)";
+        $anniversary = $db->driver === 'mysql'
+            ? "UNIX_TIMESTAMP(DATE_ADD(FROM_UNIXTIME($base), INTERVAL 1 YEAR))"
+            : "CAST(strftime('%s', $base, 'unixepoch', '+1 year',
+                CASE WHEN strftime('%m-%d', $base, 'unixepoch') = '02-29' THEN '-1 day' ELSE '+0 days' END) AS INTEGER)";
+        return "COALESCE(t.expires_at, $anniversary)";
+    }
+
     private static function anniversary(int $start): int
     {
         $date = new DateTimeImmutable('@' . $start);

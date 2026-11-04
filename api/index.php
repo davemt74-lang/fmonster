@@ -14,11 +14,11 @@ try {
     if (!$db->installed()) { throw new FMError(503, 'setup_required', 'Food Monster account services are awaiting operator setup.'); }
     $action = $_GET['action'] ?? 'bootstrap';
     if (!is_string($action) || !preg_match('/^[a-z][a-z_.]{0,63}$/D', $action)) { throw new FMError(404, 'action_not_found', 'This account action does not exist.'); }
-    $readActions = ['bootstrap', 'packages.list', 'account.summary', 'admin.overview', 'admin.hosted_jobs', 'admin.hosted_timeline', 'admin.release_analytics'];
+    $readActions = ['bootstrap', 'packages.list', 'account.summary', 'admin.overview', 'admin.hosted_jobs', 'admin.hosted_timeline', 'admin.release_analytics', 'admin.operations', 'admin.customer_timeline'];
     $method = strtoupper((string)($_SERVER['REQUEST_METHOD'] ?? 'GET'));
     $expectedMethod = in_array($action, $readActions, true) ? 'GET' : 'POST';
     if ($method !== $expectedMethod) { header('Allow: ' . $expectedMethod); throw new FMError(405, 'method_not_allowed', 'Use the supported request method for this action.'); }
-    $input = in_array($action, ['admin.hosted_jobs', 'admin.hosted_timeline'], true) ? $_GET : [];
+    $input = in_array($action, ['admin.hosted_jobs', 'admin.hosted_timeline', 'admin.operations', 'admin.customer_timeline'], true) ? $_GET : [];
     if ($method === 'POST') { FMSecurity::checkMutation(); }
     if ($action === 'admin.release_upload') {
         $admin = FMSecurity::requireAdmin($db);
@@ -45,6 +45,7 @@ try {
         if ($data === null) { $data = FMLicensing::dispatch($action, $input, $db, $config); }
         if ($data === null) { $data = FMHostingSettings::dispatch($action, $input, $db, $config); }
         if ($data === null) { $data = FMHostedOperations::dispatch($action, $input, $db); }
+        if ($data === null) { $data = FMOperatorDashboard::dispatch($action, $input, $db, $config); }
     }
     if ($data === null) { throw new FMError(404, 'action_not_found', 'This account action does not exist.'); }
     echo json_encode(['ok' => true, 'data' => (object)$data], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);

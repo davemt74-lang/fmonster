@@ -32,7 +32,7 @@ try {
         FMSecurity::checkMutation();
         FMLicensingUpgrade::apply($db, $admin['id']);
     }
-    $ready = FMLicensingUpgrade::commercialSince($db) !== null;
+    $ready = FMLicensingUpgrade::operatorReady($db);
 } catch (Throwable $error) {
     $expected = $error instanceof FMError;
     http_response_code($expected ? $error->status : 503);
