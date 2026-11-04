@@ -13,3 +13,13 @@ Food Monster Platform 1.6.1 — Existing-site upgrade
 PHP 8.2+, MySQL/MariaDB, HTTPS and the included Apache access rules are required.
 Enable PHP ZipArchive and configure a private package directory to publish ZIPs.
 Read foodmonster-private/docs/LICENSING-UPGRADE.md for activation and release publishing.
+
+Lifecycle email is off by default. After the database upgrade, configure the
+mail transport, set mail.lifecycle_enabled to true in the private config, and
+schedule foodmonster-private/lifecycle-worker.php with the same PHP CLI used by
+hosting. Run it every five minutes. Use --status for counts by type and state.
+The worker checks the current verified recipient before sending. It retries
+known transport failures twice. A process interrupted during delivery leaves
+a sending record for review against the server mail log. Check the mail log
+before manually retrying an interrupted delivery. A sent status means the
+configured transport accepted the message.

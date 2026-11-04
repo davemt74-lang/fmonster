@@ -8,6 +8,7 @@ date_default_timezone_set('UTC');
 require_once __DIR__ . '/Security.php';
 require_once __DIR__ . '/Database.php';
 require_once __DIR__ . '/Mail.php';
+require_once __DIR__ . '/LifecycleNotices.php';
 require_once __DIR__ . '/Auth.php';
 if (is_file(__DIR__ . '/Commerce.php')) { require_once __DIR__ . '/Commerce.php'; }
 

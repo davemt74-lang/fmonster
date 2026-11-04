@@ -244,4 +244,29 @@ $check($call('account.summary')['onboarding']['step'] === 'failed','Provisioning
 $db->execute("UPDATE fm_hosted_setups SET state='ready' WHERE installation_id=?",[$onboardingSite]);
 $db->execute("UPDATE fm_installations SET status='active' WHERE id=?",[$onboardingSite]);
 $check($call('account.summary')['onboarding']['step'] === 'ready','Ready link is unlocked after provisioning');
+$capture = sys_get_temp_dir() . '/fm-notices-' . bin2hex(random_bytes(8));
+$notices = array_replace($cfg,['mail'=>['enabled'=>true,'from'=>'no-reply@example.test','transport'=>'capture','capture_path'=>$capture]]);
+$db->execute('UPDATE users SET email_verified_at=? WHERE id=?',[$now,$sender]);
+$db->execute('INSERT INTO fm_subdomain_terms (installation_id,expires_at) VALUES (?,?)',[$site,$now+5*86400]);
+$use($recipient);
+$transfer = $call('subdomains.offer',['installation_id'=>$site,'recipient_email'=>'sender@example.test']);
+$db->execute("UPDATE fm_stripe_billing SET state='past_due' WHERE subscription_id=?",[$id]);
+$db->execute('UPDATE users SET email_verified_at=? WHERE id=?',[$now,$buyer]);
+$check(FMLifecycleNotices::run($db,$notices)['sent'] === 0 && !is_dir($capture),'Lifecycle mail is disabled by default');
+$notices['mail']['lifecycle_enabled'] = true;
+try {
+    $check(FMLifecycleNotices::run($db,$notices)['sent'] === 4,'Worker sends one transfer, renewal, billing and site-ready notice');
+    $files = glob($capture . '/*.json');
+    $payloads = array_map(static fn(string $file): array => json_decode(file_get_contents($file),true,flags:JSON_THROW_ON_ERROR),$files);
+    $check(count($files) === 4 && count(array_filter($payloads,static fn(array $payload): bool =>
+        $payload['to'] === 'sender@example.test' && str_contains($payload['text'],'audit-transfer.foodmonster.xyz')
+        && str_contains($payload['text'],'section=restaurant'))) === 1,'Transfer notice is addressed to its verified recipient');
+    $check(FMLifecycleNotices::run($db,$notices)['sent'] === 0 && count(glob($capture . '/*.json')) === 4,'Running the worker twice sends no duplicates');
+    $db->execute("UPDATE fm_lifecycle_notices SET state='pending',due_at=? WHERE kind='transfer'",[$now]);
+    $db->execute("UPDATE fm_subdomain_transfers SET state='declined' WHERE id=?",[$transfer['transfer_id']]);
+    $check(FMLifecycleNotices::run($db,$notices)['skipped'] === 1,'A stale queued transfer is revalidated before delivery');
+} finally {
+    foreach (glob($capture . '/*.json') as $file) unlink($file);
+    if (is_dir($capture)) rmdir($capture);
+}
 printf("%s regression checks passed (%d).\n", $argv[2], $checkCount);
