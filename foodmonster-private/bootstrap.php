@@ -14,6 +14,7 @@ if (is_file(__DIR__ . '/Commerce.php')) { require_once __DIR__ . '/Commerce.php'
 
 require_once __DIR__ . '/LicensingUpgrade.php';
 require_once __DIR__ . '/Licensing.php';
+require_once __DIR__ . '/HostedReleaseBundle.php';
 require_once __DIR__ . '/HostedSetup.php';
 require_once __DIR__ . '/Cpanel.php';
 require_once __DIR__ . '/HostingSettings.php';

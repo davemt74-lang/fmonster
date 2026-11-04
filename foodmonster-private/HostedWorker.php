@@ -657,12 +657,12 @@ final class FMHostedWorker
 
     private function pinnedRelease(array $job, bool $lock = false): array
     {
-        $sql = "SELECT version, checksum FROM fm_releases WHERE id = ? AND status = 'published' AND channel = 'stable'";
+        $sql = "SELECT id, version, checksum FROM fm_releases WHERE id = ? AND status = 'published' AND channel = 'stable'";
         $release = $this->db->one($sql . ($lock && $this->db->driver === 'mysql' ? ' FOR UPDATE' : ''), [$job['release_id']]);
         if (!$release) {
             throw new FMError(409, 'release_unavailable', 'The pinned stable release was withdrawn.');
         }
-        FMLicensing::assertHostedSignature($this->config, $release['version'], (string)$release['checksum']);
+        FMLicensing::assertReleaseSignature($this->db, $this->config, $release);
         return $release;
     }
 

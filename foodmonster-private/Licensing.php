@@ -33,7 +33,7 @@ final class FMLicensing
             $candidate = $item['licensing']['available_release'] ?? null;
             if ($candidate !== null && !empty($item['hosted_setup']) && $item['hosted_setup']['state'] === 'ready'
                 && $item['licensing']['managed_update'] === null && FMLicensingUpgrade::updatesReady($db)) {
-                $item['licensing']['managed_update_available'] = self::managedRelease($config, $candidate);
+                $item['licensing']['managed_update_available'] = self::managedRelease($db, $config, $candidate);
             }
         }
         return $installations;
@@ -44,7 +44,10 @@ final class FMLicensing
         if (!FMLicensingUpgrade::ready($db)) {
             return [];
         }
-        return array_map(self::releaseData(...), $db->query('SELECT * FROM fm_releases ORDER BY created_at DESC, id DESC'));
+        $query = FMLicensingUpgrade::releaseIntakeReady($db)
+            ? 'SELECT r.*, b.source_commit, b.public_key_sha256 FROM fm_releases r LEFT JOIN fm_signed_releases b ON b.release_id = r.id'
+            : 'SELECT r.* FROM fm_releases r';
+        return array_map(self::releaseData(...), $db->query($query . ' ORDER BY r.created_at DESC, r.id DESC'));
     }
 
     private static function ready(FMDatabase $db): void
@@ -281,7 +284,67 @@ final class FMLicensing
         }
     }
 
-    private static function createRelease(FMDatabase $db, array $input, array $admin, ?string $checksum = null, ?int $bytes = null): array
+    public static function uploadHostedBundle(FMDatabase $db, array $config, array $input, array $file, array $admin): array
+    {
+        FMSecurity::rateLimit($db, 'release_upload:' . $admin['id'], 12, 3600);
+        $bytes = $file['size'] ?? 0;
+        $error = $file['error'] ?? UPLOAD_ERR_NO_FILE;
+        if (in_array($error, [UPLOAD_ERR_INI_SIZE, UPLOAD_ERR_FORM_SIZE], true) || $bytes > 537919488) {
+            throw new FMError(413, 'upload_too_large', 'The signed artifact exceeds the upload limit.');
+        }
+        $source = $file['tmp_name'] ?? null;
+        if ($error !== UPLOAD_ERR_OK || !is_int($bytes) || $bytes < 22 || !is_string($source) || !is_uploaded_file($source)) {
+            throw new FMError(422, 'upload_incomplete', 'Choose a signed Gelato artifact ZIP and let the upload finish.');
+        }
+        return self::importHostedBundle($db, $config, $input, $source, $admin);
+    }
+
+    public static function importHostedBundle(FMDatabase $db, array $config, array $input, string $source, array $admin): array
+    {
+        if (!FMLicensingUpgrade::releaseIntakeReady($db)) {
+            throw new FMError(503, 'upgrade_required', 'Run the signed release intake database upgrade.');
+        }
+        if (!class_exists('ZipArchive')) {
+            throw new FMError(503, 'zip_unavailable', 'Enable the PHP ZIP extension before importing a signed release.');
+        }
+        $name = 'gelato-' . $db->id() . '.zip';
+        $path = self::packageDirectory($config) . '/' . $name;
+        $previousMask = umask(0077);
+        try {
+            $output = @fopen($path, 'xb');
+        } finally {
+            umask($previousMask);
+        }
+        if (!$output) {
+            throw new FMError(503, 'upload_store_failed', 'The inner ZIP could not be saved in the private release folder.');
+        }
+        $committed = false;
+        try {
+            try {
+                $bundle = FMHostedReleaseBundle::unpack($config, $source, $output);
+            } finally {
+                fclose($output);
+            }
+            [$checksum, $bytes] = self::inspectPackage($config, $name, $bundle['version']);
+            if (!hash_equals($bundle['sha256'], $checksum)) {
+                throw new FMError(409, 'hosted_bundle_checksum', 'The inner ZIP differs from the signed checksum.');
+            }
+            FMHostedReleaseBundle::assertIdentity($path, $bundle['source_commit']);
+            $result = self::createRelease($db, [
+                'version' => $bundle['version'], 'channel' => 'stable', 'notes' => $bundle['notes'], 'package_name' => $name,
+                'migration_required' => ($input['migration_required'] ?? '') === 'on',
+                'automatic_compatible' => ($input['automatic_compatible'] ?? '') === 'on',
+            ] + $input, $admin, $checksum, $bytes, $bundle);
+            $committed = true;
+            return $result;
+        } finally {
+            if (!$committed && is_file($path)) {
+                @unlink($path);
+            }
+        }
+    }
+
+    private static function createRelease(FMDatabase $db, array $input, array $admin, ?string $checksum = null, ?int $bytes = null, ?array $bundle = null): array
     {
         self::ready($db);
         $version = $input['version'] ?? null;
@@ -304,9 +367,13 @@ final class FMLicensing
         }
         $id = $db->id();
         try {
-            $db->transaction(static function () use ($db, $id, $version, $channel, $notes, $name, $minimum, $migration, $automatic, $rollback, $admin, $checksum, $bytes): void {
+            $db->transaction(static function () use ($db, $id, $version, $channel, $notes, $name, $minimum, $migration, $automatic, $rollback, $admin, $checksum, $bytes, $bundle): void {
                 $db->execute("INSERT INTO fm_releases (id, version, channel, status, notes, package_name, checksum, package_bytes, minimum_version, migration_required, automatic_compatible, rollback_notes, created_at) VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     [$id, $version, $channel, $notes, $name, $checksum, $bytes, $minimum, $migration, $automatic, $rollback, time()]);
+                if ($bundle !== null) {
+                    $db->execute('INSERT INTO fm_signed_releases (release_id, signature, public_key_sha256, source_commit) VALUES (?,?,?,?)',
+                        [$id, $bundle['signature'], $bundle['public_key_sha256'], $bundle['source_commit']]);
+                }
                 FMSecurity::audit($db, $admin['id'], 'release.drafted', ['release_id' => $id, 'version' => $version, 'channel' => $channel]);
             });
         } catch (PDOException $error) {
@@ -349,6 +416,9 @@ final class FMLicensing
             if ($row['checksum'] !== null && (!hash_equals($row['checksum'], $checksum) || (int)$row['package_bytes'] !== $bytes)) {
                 throw new FMError(409, 'package_changed', 'The staged ZIP has changed since upload.');
             }
+            if (self::storedSignature($db, $id) !== null) {
+                self::assertReleaseSignature($db, $config, $row);
+            }
             $published = time();
         }
 
@@ -387,6 +457,7 @@ final class FMLicensing
             'package_bytes' => $row['package_bytes'] === null ? null : (int)$row['package_bytes'],
             'minimum_version' => $row['minimum_version'], 'migration_required' => (bool)$row['migration_required'],
             'automatic_compatible' => (bool)$row['automatic_compatible'], 'rollback_notes' => $row['rollback_notes'],
+            'source_commit' => $row['source_commit'] ?? null, 'public_key_sha256' => $row['public_key_sha256'] ?? null,
             'published_at' => $row['published_at'] === null ? null : (int)$row['published_at'],
         ];
     }
@@ -616,14 +687,14 @@ final class FMLicensing
         return [$handle, $bytes, 'gelato-' . $release['version'] . '-' . $release['channel'] . '.zip', $attempt];
     }
 
-    private static function managedRelease(array $config, array $release): bool
+    private static function managedRelease(FMDatabase $db, array $config, array $release): bool
     {
         if (!FMManagedUpdates::enabled($config) || $release['channel'] !== 'stable'
             || !(bool)$release['automatic_compatible'] || (bool)$release['migration_required']) {
             return false;
         }
         try {
-            self::assertHostedSignature($config, $release['version'], (string)$release['checksum']);
+            self::assertReleaseSignature($db, $config, $release);
             return true;
         } catch (FMError) {
             return false;
@@ -654,7 +725,7 @@ final class FMLicensing
             }
             $license = self::record($db, $installation);
             $setup = $db->one("SELECT state FROM fm_hosted_setups WHERE installation_id = ?", [$installation]);
-            if (!$release || !$license || ($setup['state'] ?? null) !== 'ready' || !self::managedRelease($config, $release)
+            if (!$release || !$license || ($setup['state'] ?? null) !== 'ready' || !self::managedRelease($db, $config, $release)
                 || (self::snapshot($db, $license, self::published($db))['available_release']['id'] ?? null) !== $releaseId) {
                 throw new FMError(409, 'managed_update_unavailable', 'This installation and release are not eligible for a managed update.');
             }
@@ -679,7 +750,7 @@ final class FMLicensing
             self::lockOwner($db, $job['user_id']);
             $release = $db->one('SELECT * FROM fm_releases WHERE id = ?' . ($db->driver === 'mysql' ? ' FOR UPDATE' : ''), [$job['release_id']]);
             $row = self::record($db, $job['installation_id']);
-            if (!$release || $release['status'] !== 'published' || !$row || !self::managedRelease($config, $release)
+            if (!$release || $release['status'] !== 'published' || !$row || !self::managedRelease($db, $config, $release)
                 || $row['user_id'] !== $job['user_id'] || $row['id'] !== $job['license_id'] || $row['instance_id'] !== $job['instance_id']
                 || $row['installed_version'] !== $job['from_version'] || $row['hosting_mode'] !== 'cloud'
                 || $row['channel'] !== $release['channel'] || !(bool)$row['updates_enabled']
@@ -721,7 +792,7 @@ final class FMLicensing
         if ($row === null) {
             throw new FMError(409, 'hosted_release_unavailable', 'Publish the selected signed Gelato hosted release.');
         }
-        self::assertHostedSignature($config, $row['version'], (string)$row['checksum']);
+        self::assertReleaseSignature($db, $config, $row);
         [$checksum, $bytes] = self::inspectPackage($config, $row['package_name'], $row['version']);
         if (!hash_equals((string)$row['checksum'], $checksum) || (int)$row['package_bytes'] !== $bytes) {
             throw new FMError(409, 'package_changed', 'The stable package differs from its published checksum.');
@@ -729,11 +800,23 @@ final class FMLicensing
         return [$row['id'], $row['version'], self::packageDirectory($config) . '/' . $row['package_name'], $checksum];
     }
 
-    public static function assertHostedSignature(array $config, string $version, string $sha): void
+    private static function storedSignature(FMDatabase $db, string $id): ?array
+    {
+        return FMLicensingUpgrade::releaseIntakeReady($db)
+            ? $db->one('SELECT signature FROM fm_signed_releases WHERE release_id = ?', [$id]) : null;
+    }
+
+    public static function assertReleaseSignature(FMDatabase $db, array $config, array $release): void
+    {
+        $stored = self::storedSignature($db, $release['id']);
+        self::assertHostedSignature($config, $release['version'], (string)$release['checksum'], $stored['signature'] ?? null);
+    }
+
+    public static function assertHostedSignature(array $config, string $version, string $sha, ?string $detached = null): void
     {
         $hosting = $config['hosting'] ?? [];
         $publicKey = base64_decode((string)($hosting['release_public_key'] ?? ''), true);
-        $signature = base64_decode((string)($hosting['release_signatures'][$version] ?? ''), true);
+        $signature = base64_decode(($detached ?? (string)($hosting['release_signatures'][$version] ?? '')), true);
         if (!function_exists('sodium_crypto_sign_verify_detached')
             || !is_string($publicKey) || strlen($publicKey) !== SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES
             || !is_string($signature) || strlen($signature) !== SODIUM_CRYPTO_SIGN_BYTES

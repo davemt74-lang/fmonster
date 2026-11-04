@@ -288,7 +288,7 @@
     let control = '';
     if (section === 'subdomains') control = button('Add subdomain','type="button" data-action="subdomain-add"','primary');
     if (section === 'licenses' && data.licensing_ready) control = button('Create license','type="button" data-action="license-issue"','primary');
-    if (section === 'releases' && data.licensing_ready) control = `<div class="card-actions">${button('Use staged ZIP','type="button" data-action="release-create"')}${button('Upload release ZIP','type="button" data-action="release-upload"','primary')}</div>`;
+    if (section === 'releases' && data.licensing_ready) control = `<div class="card-actions">${button('Use staged ZIP','type="button" data-action="release-create"')}${button('Upload release ZIP','type="button" data-action="release-upload"')}${data.release_intake_ready ? button('Import signed bundle','type="button" data-action="release-bundle"','primary') : '<a href="upgrade.php">Enable signed bundle imports</a>'}</div>`;
     const heading = title('PLATFORM ADMIN',headings[section],'Manage licensed Gelato installations and software releases.',control);
     if (!data.licensing_ready && section !== 'subdomains') {
       return heading + `<section class="panel"><p>Run the database upgrade to enable licensing and the release registry.</p><a class="button primary" href="upgrade.php">Open database upgrade</a></section>`;
@@ -296,7 +296,7 @@
     if (section === 'releases') {
       const hostedVersion = data.configuration?.hosted_release_version;
       const hosted = hostedVersion ? `<p class="form-note">New hosted installs use version ${escape(hostedVersion)} from the private hosting settings.</p>` : '<p class="form-note">Select a signed hosted release in the private hosting settings to enable new installs.</p>';
-      return heading + `<section class="panel">${hosted}${data.releases.length ? data.releases.map(release=>`<article class="installation-card"><div class="installation-title"><h3>${escape(release.version)} · ${escape(release.channel)}</h3>${badge(release.status)}</div><p>${escape(release.notes)}</p>${infoRows([['Published',date(release.published_at)],['Minimum version',release.minimum_version || 'Any known version'],['Package bytes',release.package_bytes],['SHA-256',release.checksum],['Database upgrade',release.migration_required ? 'Required' : 'None'],['Automatic compatibility',release.automatic_compatible ? 'Yes' : 'Manual'],['Rollback',release.rollback_notes || 'None recorded']])}<div class="card-actions">${release.status === 'draft' ? recordButton('Publish','release-publish',release.id) : ''}${release.status !== 'withdrawn' ? recordButton('Withdraw','release-withdraw',release.id) : ''}</div></article>`).join('') : '<p>No releases have been drafted.</p>'}</section>`;
+      return heading + `<section class="panel">${hosted}${data.releases.length ? data.releases.map(release=>`<article class="installation-card"><div class="installation-title"><h3>${escape(release.version)} · ${escape(release.channel)}</h3>${badge(release.status)}</div><p>${escape(release.notes)}</p>${infoRows([['Published',date(release.published_at)],['Minimum version',release.minimum_version || 'Any known version'],['Package bytes',release.package_bytes],['SHA-256',release.checksum],['Source commit',release.source_commit],['Signing key fingerprint',release.public_key_sha256],['Database upgrade',release.migration_required ? 'Required' : 'None'],['Automatic compatibility',release.automatic_compatible ? 'Yes' : 'Manual'],['Rollback',release.rollback_notes || 'None recorded']])}<div class="card-actions">${release.status === 'draft' ? recordButton('Publish','release-publish',release.id) : ''}${release.status !== 'withdrawn' ? recordButton('Withdraw','release-withdraw',release.id) : ''}</div></article>`).join('') : '<p>No releases have been drafted.</p>'}</section>`;
     }
     const items = section === 'subdomains' ? data.installations.filter(item=>item.hosting_mode==='cloud') :
       section === 'updates' ? data.installations.filter(item=>item.licensing?.last_update) : data.installations.filter(item=>item.status!=='released');
@@ -360,6 +360,16 @@
       openDialog('Automatic update preference','Gelato records this preference for a future automatic updater.',choicesField('auto_update','Preference',options,license.auto_update),async values=>{
         await api('licenses.preference',{installation_id:id,auto_update:values.auto_update}); await reload(); toast('Preference saved.');
       });
+    } else if (action === 'release-bundle') {
+      const fields = '<div class="field"><label for="release-bundle">Signed Gelato artifact ZIP</label><input id="release-bundle" name="package" type="file" accept=".zip,application/zip" required></div>'+
+        field('minimum_version','Minimum installed version',{required:false})+
+        '<div class="field"><label for="rollback_notes">Rollback notes</label><textarea id="rollback_notes" name="rollback_notes" maxlength="5000"></textarea></div>'+
+        '<label class="check-label"><input type="checkbox" name="migration_required"> Requires a database upgrade</label>'+
+        '<label class="check-label"><input type="checkbox" name="automatic_compatible"> Compatible with automatic file updates</label>';
+      openDialog('Import a signed Gelato release','Use the original signed artifact ZIP. Review the separate release notes and update settings before publishing.',fields,async (values,form)=>{
+        await api('admin.release_bundle_upload',new FormData(form));
+        await reload(); toast('Signed release verified and saved as a draft.');
+      },'Verify and create draft');
     } else if (action === 'release-create' || action === 'release-upload') {
       const upload = action === 'release-upload';
       const fields = field('version','Version',{attrs:'placeholder="1.2.0"'})+

@@ -35,3 +35,14 @@ ZIP delivery counts cover completed server-side manual responses from the time t
 ## Server connection
 
 Gelato sends JSON POST requests to `https://foodmonster.xyz/api/installation.php` with a bearer credential and the installation ID, instance ID, configured hostname, and local version. It supports `activate`, `status`, `heartbeat`, and `report`. It uses TLS and authenticates independently of portal cookies and CSRF. Portal mutations and manual approval retain session and CSRF protection. Preserve the included `api/.htaccess` so Apache CGI/FastCGI can pass the credential header to PHP.
+
+### Import a signed hosted bundle
+
+Set the trusted Ed25519 public key in `hosting.release_public_key` and apply the
+database upgrade. In **Admin → Releases → Import signed bundle**, choose the ZIP
+containing the five files from the Gelato signing job. Food Monster verifies the
+key fingerprint, version, checksum, source commit inside the ZIP, and hosted
+package structure. It stores the exact deployable ZIP and creates a stable draft.
+Review the separately supplied release notes and the update settings before
+publishing. Select the provisioning version in `hosting.release_version`.
+Previously published releases using private configuration signatures still work.

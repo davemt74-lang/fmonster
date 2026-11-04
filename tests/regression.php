@@ -269,4 +269,58 @@ try {
     foreach (glob($capture . '/*.json') as $file) unlink($file);
     if (is_dir($capture)) rmdir($capture);
 }
+$releaseRoot = sys_get_temp_dir() . '/fm-signed-' . bin2hex(random_bytes(8));
+mkdir($releaseRoot,0700);
+$version = '9.0.1';
+$commit = str_repeat('a',40);
+$pair = sodium_crypto_sign_keypair();
+$public = sodium_crypto_sign_publickey($pair);
+$signing = sodium_crypto_sign_secretkey($pair);
+$releaseCfg = $cfg + ['releases'=>['private_directory'=>$releaseRoot], 'hosting'=>[
+    'release_public_key'=>base64_encode($public),'release_version'=>$version]];
+$zipFile = static function (string $path, array $members): void {
+    $zip = new ZipArchive();
+    if ($zip->open($path, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) throw new RuntimeException('Failed to build fixture ZIP');
+    foreach ($members as $name=>$content) $zip->addFromString($name,$content);
+    if (!$zip->close()) throw new RuntimeException('Failed to close fixture ZIP');
+};
+$inner = $releaseRoot . '/inner.zip';
+$artifact = $releaseRoot . '/artifact.zip';
+$zipFile($inner,['index.php'=>'<?php','upgrade.php'=>'<?php','includes/bootstrap.php'=>'<?php',
+    'GELATO_VERSION.txt'=>"$version\n",'DEPLOY_SHA.txt'=>"$commit\n",
+    'scripts/food-monster-provision.php'=>'<?php','food-monster-hosted-health.php'=>'<?php']);
+$sha = hash_file('sha256',$inner);
+$signature = base64_encode(sodium_crypto_sign_detached("Gelato Hosted Release v1\n$version\n$sha\n",$signing));
+$manifest = ['version'=>$version,'channel'=>'stable','source_commit'=>$commit,'package'=>'gelato-hosted.zip',
+    'sha256'=>$sha,'public_key_sha256'=>hash('sha256',$public)];
+$members = ['gelato-hosted.zip'=>file_get_contents($inner),'gelato-hosted.sha256'=>"$sha  gelato-hosted.zip\n",
+    'gelato-hosted.sig'=>"$signature\n",'release-notes.txt'=>"Fixture update\n",'release.json'=>json_encode($manifest)];
+$import = static fn(array $input = []) => FMLicensing::importHostedBundle($db,$releaseCfg,$input,$artifact,['id'=>$admin]);
+$use($admin);
+try {
+    $zipFile($artifact,$members + ['../rogue.txt'=>'fixture']);
+    $expect('invalid_hosted_bundle',fn()=>$import());
+    $zipFile($artifact,array_replace($members,['gelato-hosted.sig'=>base64_encode(random_bytes(64))]));
+    $expect('hosted_signature_invalid',fn()=>$import());
+    $zipFile($artifact,array_replace($members,['release.json'=>json_encode(array_replace($manifest,['source_commit'=>str_repeat('b',40)]))]));
+    $expect('hosted_bundle_identity',fn()=>$import());
+    $check(glob($releaseRoot . '/gelato-*.zip') === [],'Rejected bundles leave no staged ZIP');
+    $zipFile($artifact,$members);
+    $expect('invalid_update_policy',fn()=>$import(['migration_required'=>'on','automatic_compatible'=>'on']));
+    $release = $import()['release_id'];
+    $expect('release_exists',fn()=>$import());
+    $stored = FMLicensing::registry($db)[0];
+    $check($stored['status'] === 'draft' && $stored['source_commit'] === $commit && $stored['checksum'] === $sha,
+        'Verified release is stored as a stable draft with its source and checksum');
+    $expect('hosted_release_unavailable',fn()=>FMLicensing::hostedPackage($db,$releaseCfg,$release));
+    $action = ['release_id'=>$release,'status'=>'published'];
+    $wrong = array_replace($releaseCfg,['hosting'=>['release_public_key'=>base64_encode(random_bytes(32))]]);
+    $expect('hosted_signature_invalid',fn()=>FMLicensing::dispatch('admin.release_status',$action,$db,$wrong));
+    FMLicensing::dispatch('admin.release_status',$action,$db,$releaseCfg);
+    $check(FMLicensing::hostedPackage($db,$releaseCfg,$release)[3] === $sha && count(glob($releaseRoot . '/gelato-*.zip')) === 1,
+        'Published bundle is available through the normal hosted selection with no manual signature configuration');
+} finally {
+    foreach (glob($releaseRoot . '/*') as $file) unlink($file);
+    rmdir($releaseRoot);
+}
 printf("%s regression checks passed (%d).\n", $argv[2], $checkCount);
