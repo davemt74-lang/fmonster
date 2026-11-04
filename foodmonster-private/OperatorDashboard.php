@@ -20,10 +20,10 @@ final class FMOperatorDashboard
 
     public static function dispatch(string $action, array $input, FMDatabase $db, array $config): ?array
     {
-        if (!in_array($action, ['admin.operations', 'admin.customer_timeline', 'admin.stripe_recover'], true)) {
+        if (!in_array($action, ['admin.operations', 'admin.customer_timeline', 'admin.stripe_recover', 'admin.subdomain_retire'], true)) {
             return null;
         }
-        FMSecurity::requireAdmin($db);
+        $admin = FMSecurity::requireAdmin($db);
         if (!FMLicensingUpgrade::operatorReady($db)) {
             throw new FMError(503, 'upgrade_required', 'Run the operator dashboard database upgrade.');
         }
@@ -31,6 +31,7 @@ final class FMOperatorDashboard
             'admin.operations' => self::listing($db, $input, $config),
             'admin.customer_timeline' => self::timeline($db, $input),
             'admin.stripe_recover' => FMStripeBilling::recover($db, $config, $input, true),
+            'admin.subdomain_retire' => FMSubdomains::retire($db, $config, $input, $admin),
         };
     }
 
@@ -65,7 +66,7 @@ final class FMOperatorDashboard
                 LEFT JOIN fm_billing_reviews r ON r.subscription_id = s.id
                 WHERE (r.subscription_id IS NOT NULL OR b.state = 'past_due'
                     OR (b.state IN ('checkout','confirming') AND s.created_at <= ?))", [$now - 1800], 's.updated_at DESC, s.id'],
-            'domains' => ["$site, $expiry AS expires_at
+            'domains' => ["$site, i.deployment_started_at, i.activated_at, $expiry AS expires_at
                 FROM fm_installations i JOIN users u ON u.id = i.user_id LEFT JOIN fm_subdomain_terms t ON t.installation_id = i.id
                 WHERE i.hosting_mode = 'cloud' AND i.released_at IS NULL AND $expiry <= ?", [$now + 30 * 86400], 'expires_at, i.id'],
             'customers' => ["SELECT $customer, u.id, u.created_at AS updated_at FROM users u WHERE u.role = 'customer'", [], 'u.created_at DESC, u.id'],
@@ -79,6 +80,8 @@ final class FMOperatorDashboard
         foreach ($rows as &$row) {
             $row['can_recover'] = $stripe && $row['state'] === 'checkout';
             $row['can_retry'] = $view === 'hosting' && $row['command'] === null;
+            $row['can_retire'] = $view === 'domains' && FMSubdomains::canReviewRetirement($db, $row, (int)$row['expires_at'], $now);
+            unset($row['deployment_started_at'], $row['activated_at']);
         }
         return ['view' => $view, 'page' => $page, 'has_more' => count($rows) > self::LIMIT, 'rows' => array_slice($rows, 0, self::LIMIT)];
     }
@@ -95,7 +98,7 @@ final class FMOperatorDashboard
             FROM fm_subscriptions s LEFT JOIN fm_stripe_billing b ON b.subscription_id = s.id
             LEFT JOIN fm_billing_reviews r ON r.subscription_id = s.id
             WHERE s.user_id = ? ORDER BY s.created_at DESC, s.id DESC LIMIT 30', [$id]);
-        $sites = $db->query('SELECT i.id, i.domain, i.status, i.created_at, i.hosting_mode, h.state AS setup_state
+        $sites = $db->query('SELECT i.id, i.domain, i.status, i.created_at, i.hosting_mode, i.released_at, h.state AS setup_state
             FROM fm_installations i LEFT JOIN fm_hosted_setups h ON h.installation_id = i.id
             WHERE i.user_id = ? ORDER BY i.created_at DESC, i.id DESC LIMIT 30', [$id]);
         foreach ($sites as &$site) {
@@ -106,6 +109,11 @@ final class FMOperatorDashboard
         $audits = $db->query("SELECT event, created_at FROM audit_log WHERE user_id = ? AND event IN ($list) ORDER BY created_at DESC, id DESC LIMIT 30", [$id, ...$names]);
         $events = array_map(static fn(array $row): array => ['title' => self::EVENTS[$row['event']], 'at' => (int)$row['created_at']], $audits);
         $events[] = ['title' => 'Account created', 'at' => (int)$customer['created_at']];
+        foreach ($sites as $site) {
+            if ($site['released_at'] !== null) {
+                $events[] = ['title' => 'Registration released', 'at' => (int)$site['released_at'], 'domain' => $site['domain']];
+            }
+        }
         $hosting = $db->query('SELECT e.event, e.stage, e.created_at, i.domain FROM fm_hosted_events e JOIN fm_installations i ON i.id = e.installation_id
             WHERE i.user_id = ? ORDER BY e.created_at DESC, e.id DESC LIMIT 30', [$id]);
         foreach ($hosting as $event) {

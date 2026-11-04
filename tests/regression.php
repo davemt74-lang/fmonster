@@ -323,4 +323,56 @@ try {
     foreach (glob($releaseRoot . '/*') as $file) unlink($file);
     rmdir($releaseRoot);
 }
+$hostRoot = sys_get_temp_dir() . '/fm-retirement-' . bin2hex(random_bytes(8));
+mkdir($hostRoot,0700);
+mkdir($hostRoot . '/tenants',0700);
+mkdir($hostRoot . '/private',0700);
+$cpanelDomains = ['main_domain'=>'foodmonster.xyz','addon_domains'=>[],'parked_domains'=>[],'sub_domains'=>[]];
+$dns = [];
+$cpanelReads = [];
+$retireCfg = $cfg + ['hosting'=>['account_home'=>$hostRoot,'tenant_root'=>$hostRoot.'/tenants','private_root'=>$hostRoot.'/private',
+    'test_cpanel_transport'=>static function (string $operation) use (&$cpanelDomains,&$cpanelReads): array {
+        $cpanelReads[] = $operation;
+        return ['result'=>['status'=>1,'data'=>$cpanelDomains]];
+    }, 'test_retirement_dns'=>static function (string $domain) use (&$dns): array|false { return $dns; }]];
+$retire = static fn(array $input) => FMOperatorDashboard::dispatch('admin.subdomain_retire',$input,$db,$retireCfg);
+$use($admin);
+FMHostingSettings::dispatch('admin.cpanel_save',['hostname'=>'fixture.hostgator.com','username'=>'fixture','token'=>'ExampleToken12345678'],$db,$retireCfg);
+FMHostingSettings::dispatch('admin.cpanel_test',[],$db,$retireCfg);
+$retirement = ['installation_id'=>$site,'confirm_domain'=>'audit-transfer.foodmonster.xyz','note'=>'Expired reservation checked.'];
+try {
+    $use($recipient);
+    $expect('admin_required',fn()=>$retire($retirement));
+    $use($admin);
+    $expect('retirement_ineligible',fn()=>$retire($retirement));
+    $db->execute('UPDATE fm_subdomain_terms SET expires_at=? WHERE installation_id=?',[$now-31*86400,$site]);
+    $check($operator('operations',['view'=>'domains'])['rows'][0]['can_retire'],'Expired unused domain is eligible for review after its grace period');
+    $expect('retirement_confirmation',fn()=>$retire(array_replace($retirement,['confirm_domain'=>'other.foodmonster.xyz'])));
+    $cpanelDomains['sub_domains'] = ['AUDIT-TRANSFER.FOODMONSTER.XYZ.'];
+    $expect('retirement_domain_present',fn()=>$retire($retirement));
+    unset($cpanelDomains['sub_domains']);
+    $expect('retirement_inventory_unavailable',fn()=>$retire($retirement));
+    $cpanelDomains['sub_domains'] = [];
+    $dns = [['type'=>'CNAME','target'=>'fixture.example.test']];
+    $expect('retirement_dns_present',fn()=>$retire($retirement));
+    $dns = false;
+    $expect('retirement_dns_present',fn()=>$retire($retirement));
+    $dns = [];
+    symlink($hostRoot.'/missing',$hostRoot.'/tenants/audit-transfer');
+    $expect('retirement_files_present',fn()=>$retire($retirement));
+    unlink($hostRoot.'/tenants/audit-transfer');
+    $db->execute("UPDATE fm_installations SET status='active' WHERE id=?",[$site]);
+    $expect('retirement_ineligible',fn()=>$retire($retirement));
+    $db->execute("UPDATE fm_installations SET status='reserved' WHERE id=?",[$site]);
+    $retire($retirement);
+    $check($db->one('SELECT status FROM fm_installations WHERE id=?',[$site])['status'] === 'released'
+        && $db->one('SELECT installation_id FROM fm_domain_claims WHERE installation_id=?',[$site]) === null
+        && $db->one("SELECT user_id FROM audit_log WHERE event='subdomain.retired'")['user_id'] === $admin
+        && array_unique($cpanelReads) === ['domains'],'Retirement frees only the registry claim, preserves history and records the reviewing admin');
+} finally {
+    if (is_link($hostRoot.'/tenants/audit-transfer')) unlink($hostRoot.'/tenants/audit-transfer');
+    rmdir($hostRoot.'/tenants');
+    rmdir($hostRoot.'/private');
+    rmdir($hostRoot);
+}
 printf("%s regression checks passed (%d).\n", $argv[2], $checkCount);
